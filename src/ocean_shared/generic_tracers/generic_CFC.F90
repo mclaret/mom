@@ -80,14 +80,17 @@ module generic_CFC
   !nnz: Find out about the timing overhead for using type%x rather than x
 
   type generic_CFC_params
-     real :: a1_11, a2_11, a3_11, a4_11   ! Coefficients in the calculation of the
-     real :: a1_12, a2_12, a3_12, a4_12   ! CFC11 and CFC12 Schmidt numbers, in
+     real :: a1_11, a2_11, a3_11, a4_11, a5_11  ! Coefficients in the calculation of the
+     real :: a1_12, a2_12, a3_12, a4_12, a5_12  ! CFC11 and CFC12 Schmidt numbers, in
+     real :: a1_sf6,a2_sf6,a3_sf6,a4_sf6,a5_sf6 ! CFC11 and CFC12 Schmidt numbers, in
      ! units of ND, degC-1, degC-2, degC-3.
      real :: d1_11, d2_11, d3_11, d4_11   ! Coefficients in the calculation of the
      real :: d1_12, d2_12, d3_12, d4_12   ! CFC11 and CFC12 solubilities, in units
+     real :: d1_sf6,d2_sf6,d3_sf6         ! SF6 coefficients
      ! of ND, K-1, log(K)^-1, K-2.
-     real :: e1_11, e2_11, e3_11          ! More coefficients in the calculation of
-     real :: e1_12, e2_12, e3_12          ! the CFC11 and CFC12 solubilities, in
+     real :: e1_11,  e2_11,  e3_11          ! More coefficients in the calculation of
+     real :: e1_12,  e2_12,  e3_12          ! the CFC11 and CFC12 solubilities, in
+     real :: e1_sf6, e2_sf6, e3_sf6         ! SF6 coefficients
      ! units of PSU-1, PSU-1 K-1, PSU-1 K-2.
      real :: Rho_0
      character(len=fm_string_len) :: ice_restart_file
@@ -176,18 +179,36 @@ contains
     !         for CFC11 and CFC12
     !-----------------------------------------------------------------------
     !    g_tracer_add_param(name   , variable   ,  default_value)
-    call g_tracer_add_param('a1_11', param%a1_11,  3501.8)
-    call g_tracer_add_param('a2_11', param%a2_11, -210.31)
-    call g_tracer_add_param('a3_11', param%a3_11,  6.1851)
-    call g_tracer_add_param('a4_11', param%a4_11, -0.07513)
-    call g_tracer_add_param('a1_12', param%a1_12,  3845.4)
-    call g_tracer_add_param('a2_12', param%a2_12, -228.95)
-    call g_tracer_add_param('a3_12', param%a3_12,  6.1908)
-    call g_tracer_add_param('a4_12', param%a4_12, -0.067430)
+    !call g_tracer_add_param('a1_11', param%a1_11,  3501.8)
+    !call g_tracer_add_param('a2_11', param%a2_11, -210.31)
+    !call g_tracer_add_param('a3_11', param%a3_11,  6.1851)
+    !call g_tracer_add_param('a4_11', param%a4_11, -0.07513)
+    !call g_tracer_add_param('a1_12', param%a1_12,  3845.4)
+    !call g_tracer_add_param('a2_12', param%a2_12, -228.95)
+    !call g_tracer_add_param('a3_12', param%a3_12,  6.1908)
+    !call g_tracer_add_param('a4_12', param%a4_12, -0.067430)
+!
+! New numbers Wanninkhof 2014
+    call g_tracer_add_param('a1_11',  param%a1_11,   3579.2)
+    call g_tracer_add_param('a2_11',  param%a2_11,  -222.63)
+    call g_tracer_add_param('a3_11',  param%a3_11,   7.5749)
+    call g_tracer_add_param('a4_11',  param%a4_11, -0.14595)
+    call g_tracer_add_param('a5_11',  param%a5_11,0.0011874)
+    call g_tracer_add_param('a1_12',  param%a1_12,   3828.1)
+    call g_tracer_add_param('a2_12',  param%a2_12,  -249.86)
+    call g_tracer_add_param('a3_12',  param%a3_12,   8.7603)
+    call g_tracer_add_param('a4_12',  param%a4_12,  -0.1716)
+    call g_tracer_add_param('a5_12',  param%a5_12, 0.001408)
+    call g_tracer_add_param('a1_sf6', param%a1_sf6,  3177.5)
+    call g_tracer_add_param('a2_sf6', param%a2_sf6, -200.57)
+    call g_tracer_add_param('a3_sf6', param%a3_sf6,  6.8865)
+    call g_tracer_add_param('a4_sf6', param%a4_sf6,-0.13335)
+    call g_tracer_add_param('a5_sf6', param%a5_sf6,0.0010877)
     !-----------------------------------------------------------------------
-    !     Solubility coefficients for alpha in mol/l/atm
-    !      (1) for CFC11, (2) for CFC12
-    !     after Warner and Weiss (1985) DSR, vol 32 for CFC11 and CFC12
+    !     Solubility coefficients for alpha in mol/l/atm (volumetric form)
+    !      (1) for CFC11, (2) for CFC12, (3) for SF6
+    !     after Warner and Weiss (1985) DSR, vol 32 for CFC11 and CFC12 Table 5
+    !     SF6 after Bullister et al 2002 DSR Table 3
     !-----------------------------------------------------------------------
     call g_tracer_add_param('d1_11', param%d1_11, -229.9261)
     call g_tracer_add_param('d2_11', param%d2_11,  319.6552)
@@ -196,6 +217,7 @@ contains
     call g_tracer_add_param('e1_11', param%e1_11, -0.142382)
     call g_tracer_add_param('e2_11', param%e2_11,  0.091459)
     call g_tracer_add_param('e3_11', param%e3_11, -0.0157274)
+!
     call g_tracer_add_param('d1_12', param%d1_12, -218.0971)
     call g_tracer_add_param('d2_12', param%d2_12,  298.9702)
     call g_tracer_add_param('d3_12', param%d3_12,  113.8049)
@@ -203,6 +225,41 @@ contains
     call g_tracer_add_param('e1_12', param%e1_12, -0.143566)
     call g_tracer_add_param('e2_12', param%e2_12,  0.091015)
     call g_tracer_add_param('e3_12', param%e3_12, -0.0153924)
+
+    call g_tracer_add_param('d1_sf6', param%d1_sf6,  -80.0343)
+    call g_tracer_add_param('d2_sf6', param%d2_sf6,   117.232)
+    call g_tracer_add_param('d3_sf6', param%d3_sf6,   29.5817)
+    call g_tracer_add_param('e1_sf6', param%e1_sf6, 0.0335183)
+    call g_tracer_add_param('e2_sf6', param%e2_sf6,-0.0373942)
+    call g_tracer_add_param('e3_sf6', param%e3_sf6,0.00774862)
+
+    !-----------------------------------------------------------------------
+    !     Solubility coefficients for alpha in mol/kg/atm (gravimetric form)
+    !      (1) for CFC11, (2) for CFC12, (3) for SF6
+    !     SF6 after Bullister et al 2002 DSR Table 3
+    !-----------------------------------------------------------------------
+    !call g_tracer_add_param('d1_11', param%d1_11, -232.0411)
+    !call g_tracer_add_param('d2_11', param%d2_11,  322.5546)
+    !call g_tracer_add_param('d3_11', param%d3_11,  120.4956)
+    !call g_tracer_add_param('d4_11', param%d4_11,  -1.39165)
+    !call g_tracer_add_param('e1_11', param%e1_11, -0.146531)
+    !call g_tracer_add_param('e2_11', param%e2_11,  0.093621)
+    !call g_tracer_add_param('e3_11', param%e3_11,-0.0160693)
+
+    !call g_tracer_add_param('d1_12', param%d1_12, -220.2120)
+    !call g_tracer_add_param('d2_12', param%d2_12,  301.8695)
+    !call g_tracer_add_param('d3_12', param%d3_12,  114.8533)
+    !call g_tracer_add_param('d4_12', param%d4_12,  -1.39165)
+    !call g_tracer_add_param('e1_12', param%e1_12, -0.147718)
+    !call g_tracer_add_param('e2_12', param%e2_12,  0.093175)
+    !call g_tracer_add_param('e3_12', param%e3_12,-0.0157340)
+
+    !call g_tracer_add_param('d1_sf6', param%d1_sf6,  -82.1639)
+    !call g_tracer_add_param('d2_sf6', param%d2_sf6,   120.152)
+    !call g_tracer_add_param('d3_sf6', param%d3_sf6,   30.6372)
+    !call g_tracer_add_param('e1_sf6', param%e1_sf6, 0.0293201)
+    !call g_tracer_add_param('e2_sf6', param%e2_sf6,-0.0351974)
+    !call g_tracer_add_param('e3_sf6', param%e3_sf6,0.00740056)
 
     !  Rho_0 is used in the Boussinesq
     !  approximation to calculations of pressure and
@@ -258,7 +315,7 @@ contains
          prog       = .true.,              &
          flux_gas       = .true.,                      &
          flux_gas_type  = 'air_sea_gas_flux_generic',                  &
-         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /), &
+         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /), & ! Wanninkhof 2014: 0.251 cm/h
          flux_gas_restart_file  = 'ocmip2_cfc_airsea_flux.res.nc' )
 
     !g_cfc_11
@@ -269,9 +326,19 @@ contains
          prog       = .true.,              &
          flux_gas       = .true.,                      &
          flux_gas_type  = 'air_sea_gas_flux_generic',                  &
-         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /), &
+         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /), & ! Wanninkhof 2014: 0.251 cm/h
          flux_gas_restart_file  = 'ocmip2_cfc_airsea_flux.res.nc' )
 
+    !sf6
+    call g_tracer_add(tracer_list,package_name,&
+         name           = 'sf6',               &
+         longname       = 'sf6 Concentration', &
+         units          = 'mol/kg',            &
+         prog           = .true.,              &
+         flux_gas       = .true.,              &
+         flux_gas_type  = 'air_sea_gas_flux_generic', &
+         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /), & ! Wanninkhof 2014: 0.251 cm/h
+         flux_gas_restart_file  = 'ocmip2_cfc_airsea_flux.res.nc' )
 
   end subroutine user_add_tracers
 
@@ -354,11 +421,13 @@ contains
     integer,                        intent(in) :: ilb,jlb,taum1
 
     integer :: isc,iec, jsc,jec,isd,ied,jsd,jed,nk,ntau , i, j
-    real    :: conv_fac,sal,ta,SST,alpha_11,alpha_12,sc_11,sc_12
+    real    :: conv_fac,sal,ta,SST,alpha_11,alpha_12,alpha_sf6,sc_11,sc_12
     real, dimension(:,:,:)  ,pointer  :: grid_tmask
-    real, dimension(:,:,:,:), pointer :: g_cfc_11_field,g_cfc_12_field
-    real, dimension(:,:), ALLOCATABLE :: g_cfc_11_alpha,g_cfc_11_csurf,g_cfc_12_alpha,g_cfc_12_csurf
-    real, dimension(:,:), ALLOCATABLE :: sc_no_11,sc_no_12
+    real, dimension(:,:,:,:), pointer :: g_cfc_11_field,g_cfc_12_field,g_sf6_field
+    real, dimension(:,:), ALLOCATABLE :: g_cfc_11_alpha,g_cfc_11_csurf
+    real, dimension(:,:), ALLOCATABLE :: g_cfc_12_alpha,g_cfc_12_csurf
+    real, dimension(:,:), ALLOCATABLE :: g_sf6_alpha   ,g_sf6_csurf
+    real, dimension(:,:), ALLOCATABLE :: sc_no_11,sc_no_12,sc_no_sf6
 
     character(len=fm_string_len), parameter :: sub_name = 'generic_CFC_set_boundary_values'
 
@@ -375,13 +444,17 @@ contains
 
     call g_tracer_get_pointer(tracer_list,'cfc_11','field',g_cfc_11_field)
     call g_tracer_get_pointer(tracer_list,'cfc_12','field',g_cfc_12_field)
+    call g_tracer_get_pointer(tracer_list,'sf6'   ,'field',g_sf6_field)
 
     allocate(g_cfc_11_alpha(isd:ied, jsd:jed)); g_cfc_11_alpha=0.0
     allocate(g_cfc_11_csurf(isd:ied, jsd:jed)); g_cfc_11_csurf=0.0
     allocate(g_cfc_12_alpha(isd:ied, jsd:jed)); g_cfc_12_alpha=0.0
     allocate(g_cfc_12_csurf(isd:ied, jsd:jed)); g_cfc_12_csurf=0.0
-    allocate(sc_no_11(isd:ied, jsd:jed))
-    allocate(sc_no_12(isd:ied, jsd:jed))
+    allocate(g_sf6_alpha   (isd:ied, jsd:jed)); g_sf6_alpha=0.0
+    allocate(g_sf6_csurf   (isd:ied, jsd:jed)); g_sf6_csurf=0.0
+    allocate(sc_no_11 (isd:ied, jsd:jed))
+    allocate(sc_no_12 (isd:ied, jsd:jed))
+    allocate(sc_no_sf6(isd:ied, jsd:jed))
 
     !The atmospheric code needs soluabilities in units of mol/m3/atm
     !
@@ -419,13 +492,28 @@ contains
             sal * ((param%e3_12 * ta + param%e2_12) * ta + param%e1_12)&
             )
 
+       alpha_sf6 = conv_fac * grid_tmask(i,j,1) * &
+            exp(param%d1_sf6 + param%d2_sf6/ta + param%d3_sf6*log(ta)      +&
+            sal * ((param%e3_sf6 * ta + param%e2_sf6) * ta + param%e1_sf6)&
+            )
+
        !---------------------------------------------------------------------
        !     Calculate Schmidt numbers
        !      use coefficients given by Zheng et al (1998), JGR vol 103, C1
        !---------------------------------------------------------------------
-       sc_no_11(i,j) = param%a1_11 + SST * (param%a2_11 + SST * (param%a3_11 + SST * param%a4_11)) * &
+       !sc_no_11 (i,j) = param%a1_11 + SST * (param%a2_11 + SST * (param%a3_11 + SST * param%a4_11)) * &
+       !     grid_tmask(i,j,1)
+       !sc_no_12 (i,j) = param%a1_12 + SST * (param%a2_12 + SST * (param%a3_12 + SST * param%a4_12)) * &
+       !     grid_tmask(i,j,1)
+       !---------------------------------------------------------------------
+       !     Calculate Schmidt numbers
+       !      use coefficients given by Wanninkhof (2014) (Oct'17 MClaret)
+       !---------------------------------------------------------------------
+       sc_no_11 (i,j) = param%a1_11 +SST*(param%a2_11 +SST*(param%a3_11 +SST*(param%a4_11 +SST*param%a5_11 ))) * &
             grid_tmask(i,j,1)
-       sc_no_12(i,j) = param%a1_12 + SST * (param%a2_12 + SST * (param%a3_12 + SST * param%a4_12)) * &
+       sc_no_12 (i,j) = param%a1_12 +SST*(param%a2_12 +SST*(param%a3_12 +SST*(param%a4_12 +SST*param%a5_12 ))) * &
+            grid_tmask(i,j,1)
+       sc_no_sf6(i,j) = param%a1_sf6+SST*(param%a2_sf6+SST*(param%a3_sf6+SST*(param%a4_sf6+SST*param%a5_sf6))) * &
             grid_tmask(i,j,1)
 
        !sc_no_term = sqrt(660.0 / (sc_11 + epsln))
@@ -440,6 +528,11 @@ contains
        g_cfc_12_alpha(i,j) = alpha_12              
 
        g_cfc_12_csurf(i,j) = g_cfc_12_field(i,j,1,taum1) *  param%Rho_0
+
+       g_sf6_alpha(i,j)    = alpha_sf6              
+
+       g_sf6_csurf(i,j)    = g_sf6_field(i,j,1,taum1) *  param%Rho_0
+ 
  
     enddo; enddo
     !=============
@@ -457,7 +550,14 @@ contains
     call g_tracer_set_values(tracer_list,'cfc_12','csurf',g_cfc_12_csurf,isd,jsd)
     call g_tracer_set_values(tracer_list,'cfc_12','sc_no',sc_no_12,isd,jsd)
 
-    deallocate(g_cfc_11_alpha,g_cfc_11_csurf,g_cfc_12_alpha,g_cfc_12_csurf,sc_no_11,sc_no_12)
+    call g_tracer_set_values(tracer_list,'sf6','alpha',g_sf6_alpha,isd,jsd)
+    call g_tracer_set_values(tracer_list,'sf6','csurf',g_sf6_csurf,isd,jsd)
+    call g_tracer_set_values(tracer_list,'sf6','sc_no',sc_no_sf6  ,isd,jsd)
+
+    deallocate(g_cfc_11_alpha,g_cfc_11_csurf, &
+               g_cfc_12_alpha,g_cfc_12_csurf, &
+               g_sf6_alpha   ,g_sf6_csurf   , &
+               sc_no_11,sc_no_12,sc_no_sf6     )
 
   end subroutine generic_CFC_set_boundary_values
 

@@ -72,13 +72,16 @@
 !
 !  <DATA NAME="do_carbon" TYPE="logical">
 !  If true, then simulate the carbon cycle based on strict stoichiometry
-! of C:P. Includes 1 prognostic tracer, DIC.
+! of C:P. Includes 2 prognostic tracer, DIC and ALK.
 !  </DATA> 
 !
 !  <DATA NAME="do_carbon_pre" TYPE="logical">
 !  If true, then simulate the carbon cycle based on strict stoichiometry
 !  of C:P. Includes 3 prognostic tracers, DIC, ALK and ALK_pre. Requires 
 ! that do_carbon = .true.
+!  </DATA> 
+!
+!  <DATA NAME="do_carbon_sat" TYPE="logical">
 !  </DATA> 
 !
 !  <DATA NAME="do_po4_pre" TYPE="logical">
@@ -126,6 +129,7 @@ module generic_BLING
   use g_tracer_utils, only : g_tracer_set_values,g_tracer_get_pointer
   use g_tracer_utils, only : g_tracer_get_common,g_tracer_set_common 
   use g_tracer_utils, only : g_tracer_coupler_set,g_tracer_coupler_get
+
   use g_tracer_utils, only : g_tracer_send_diag, g_tracer_get_values  
 
   use FMS_ocmip2_co2calc_mod, only : FMS_ocmip2_co2calc, CO2_dope_vector
@@ -158,14 +162,16 @@ module generic_BLING
 
 ! Namelist Options
 
+  logical :: do_13c             = .false. ! Requires do_carbon = .true.
   logical :: do_14c             = .true.  ! Requires do_carbon = .true.
   logical :: do_carbon          = .true.  
   logical :: do_carbon_pre      = .true.  ! Requires do_carbon = .true.
+  logical :: do_carbon_sat      = .false. ! Requires do_carbon = .true.
   logical :: do_po4_pre         = .true.
   logical :: bury_caco3         = .false. ! Requires do_carbon = .true.
   logical :: use_bling_chl      = .false. ! Must be false to run with TOPAZ
 
-namelist /generic_bling_nml/ do_14c, do_carbon, do_carbon_pre, &
+namelist /generic_bling_nml/ do_13c, do_14c, do_carbon, do_carbon_sat, do_carbon_pre, &
   do_po4_pre, bury_caco3, use_bling_chl
 
   !
@@ -231,9 +237,17 @@ namelist /generic_bling_nml/ do_14c, do_carbon, do_carbon_pre, &
           wsink0_z,         &                  ! Depth to which sinking rate remains constant
           z_sed                                ! Thickness of active sediment layer
 
+! carbon 13
+     real  :: alpha13c_caco3,     &  ! Fractionation in organic uptake of 13C
+              alpha13c_askinetic, &  ! Air-sea kinetic fractionation factor for 13CO2
+              alpha13c_aq_g,      &  ! Equilibrium fractionation factor from gaseous to aqueous CO2   
+              !r13cvpdb,           &  ! Fractional abundance of 13DIC in the VPDB standard, used as a scaling factor
+              R13dic,             &  ! Ratio of dissolved 13DIC to 12DIC 
+              alpha_aq_DIC           ! alpha_aq_g/alpha_DIC_g
+
      real    :: htotal_scale_lo, htotal_scale_hi, htotal_in
      real    :: Rho_0, a_0, a_1, a_2, a_3, a_4, a_5, b_0, b_1, b_2, b_3, c_0
-     real    :: a1_co2, a2_co2, a3_co2, a4_co2, a1_o2, a2_o2, a3_o2, a4_o2
+     real    :: a1_co2, a2_co2, a3_co2, a4_co2, a5_co2, a1_o2, a2_o2, a3_o2, a4_o2, a5_o2
 
 !
 ! The prefixes "f_" refers to a "field" and "j" to a volumetric rate, and 
@@ -329,6 +343,36 @@ namelist /generic_bling_nml/ do_14c, do_carbon, do_carbon_pre, &
           jdo14c,&
           zremin_caco3
 
+! carbon 13
+     real, dimension(:,:,:), ALLOCATABLE ::  &
+          f_di13c       ,&
+          f_do13c       ,&
+          jdi13c        ,&
+          jdo13c        ,&
+          co2_star      ,&
+          alpha13c_org  ,&
+          alpha13_DIC_g ,&
+          c13_2_p       ,&
+          j13c_org      ,&
+          j13c_reminp   ,&
+          j13c_uptakeca ,&
+          j13c_reminca  ,&
+          fpo13c        ,&
+          fca13co3      ,&
+          wrk3,          &
+          f_ca13csed
+
+! carbon 13
+     real, dimension(:,:), ALLOCATABLE :: &
+          b_di13c,          &
+          wrk1,             &
+          wrk2,             &
+          fca13co3_to_sed,  &
+          fca13csed_burial, &
+          fca13csed_redis , &
+          c13o2_csurf,      &
+          c13o2_alpha 
+
      real, dimension(:,:), ALLOCATABLE :: &
           fe_burial,&
           ffe_sed,&
@@ -376,10 +420,13 @@ namelist /generic_bling_nml/ do_14c, do_carbon, do_carbon_pre, &
      real, dimension(:,:,:,:), pointer :: &
           p_alk,&
           p_alk_pre,&
+          p_di13c,&
+          p_di13c_pre,&
+          p_do13c,&
           p_di14c,&
           p_dic,&
           p_dic_pre,&
-          p_do14c
+          p_do14c 
      
      integer :: nkml
      character(len=fm_string_len) :: file
@@ -492,6 +539,30 @@ namelist /generic_bling_nml/ do_14c, do_carbon, do_carbon_pre, &
       id_chl           = -1,  & ! Chlorophyll Diagnostic tracer
       id_biomass_p     = -1,  & ! Biomass Diagnostic tracer
       id_irr_mem       = -1     ! Irradiance Memory Diagnostic tracer
+ 
+! carbon 13
+      integer :: id_jdi13c           = -1, & ! DI13C source layer integral
+                 id_jdo13c           = -1, & ! DO13C source layer integral
+                 id_co2_star         = -1, & ! CO2*
+                 id_alpha13c_org     = -1, & ! Fractionation from DIC to particulate organic carbon during 
+                 id_alpha13_DIC_g    = -1, & ! Equilibrium ractionation factor from gaseous CO2 to DIC
+                 id_c13_2_p          = -1, & ! DI13C to PO4 uptake ratio
+                 id_j13c_org         = -1, & ! Semilabile c13_org source layer integral 
+                 id_fpo13c           = -1, & ! PO13C sinking flux  
+                 id_j13c_reminp      = -1, & ! 13C particle remineralization layer integral
+                 id_j13c_uptakeca    = -1, & ! Ca13CO3 formation layer integral
+                 id_j13c_reminca     = -1, & ! Ca13CO3 dissolution layer integral  
+                 id_fca13co3         = -1, & ! Ca13CO3 sinking flux
+                 id_b_di13c          = -1, & ! Bottom flux of DI13C
+                 id_wrk1             = -1, & ! Work array 1
+                 id_wrk2             = -1, & ! Work array 2
+                 id_wrk3             = -1, & ! Work array 3
+                 id_fca13co3_to_sed  = -1, & ! Ca13CO3 sinking flux in bottom layer
+                 id_fca13csed_burial = -1, & ! Ca13CO3 permanent burial flux
+                 id_fca13csed_redis  = -1, & ! Ca13CO3 dissolution flux from active sediment layer
+                 id_c13o2_csurf      = -1, & ! Surface water 13CO2*
+                 id_c13o2_alpha      = -1, & ! Surface water 13CO2* solubility
+                 id_di13c_pre        = -1    ! Preformed DI13C Prognostic tracer
 
   end type generic_BLING_type
 
@@ -555,6 +626,13 @@ write (stdoutunit,'(/)')
 write (stdoutunit, generic_bling_nml)
 write (stdlogunit, generic_bling_nml)
 
+  if ((do_13c) .and. (do_carbon)) then
+    write (stdoutunit,*) trim(note_header), 'Simulating delta 13C'
+  else if ((do_13c) .and. .not. (do_carbon)) then
+    call mpp_error(FATAL, trim(error_header) //        &
+         'Do_13c requires do_carbon' // trim(name))
+  endif
+
   if ((do_14c) .and. (do_carbon)) then
     write (stdoutunit,*) trim(note_header), 'Simulating radiocarbon'
   else if ((do_14c) .and. .not. (do_carbon)) then
@@ -563,10 +641,17 @@ write (stdlogunit, generic_bling_nml)
   endif
 
   if ((do_carbon_pre) .and. (do_carbon)) then
-    write (stdoutunit,*) trim(note_header), 'Calculating DIC_pre and DIC_sat'
+    write (stdoutunit,*) trim(note_header), 'Calculating DIC_pre'
   else if ((do_carbon_pre) .and. .not. (do_carbon)) then
     call mpp_error(FATAL, trim(error_header) //        &
          'Do_carbon_pre requires do_carbon' // trim(name))
+  endif
+
+  if ((do_carbon_sat) .and. (do_carbon)) then
+    write (stdoutunit,*) trim(note_header), 'Calculating DIC_sat'
+  else if ((do_carbon_sat) .and. .not. (do_carbon)) then
+    call mpp_error(FATAL, trim(error_header) //        &
+         'Do_carbon_sat requires do_carbon' // trim(name))
   endif
 
   if ((bury_caco3) .and. (do_carbon)) then
@@ -606,7 +691,7 @@ write (stdlogunit, generic_bling_nml)
   subroutine generic_BLING_init(tracer_list)
     type(g_tracer_type), pointer :: tracer_list
 
-    call write_version_number( version, tagname )
+    call write_version_number(version, tagname)
 
     !Specify and initialize all parameters used by this package
     call user_add_params
@@ -901,7 +986,7 @@ write (stdlogunit, generic_bling_nml)
          init_time, vardesc_temp%longname,vardesc_temp%units, missing_value = missing_value1)
       endif                                                   !RADIOCARBON>>
 
-      if (do_carbon_pre) then                                     !<<DIC_PRE  
+      if (do_carbon_sat) then                                     !<<DIC_SAT
     vardesc_temp = vardesc&
     ("co2_sat_csurf","CO2* concentration for DIC_sat at surface",'h','1','s','mol kg-1','f')
     bling%id_co2_sat_csurf = register_diag_field(package_name, vardesc_temp%name, axes(1:2),&
@@ -910,7 +995,108 @@ write (stdlogunit, generic_bling_nml)
     ("pco2_sat_surf","Seawater pCO2 in surface layer",'h','1','s','uatm','f')
     bling%id_pco2_sat_surf = register_diag_field(package_name, vardesc_temp%name, axes(1:2),&
          init_time, vardesc_temp%longname,vardesc_temp%units, missing_value = missing_value1)
-      endif                                                       !DIC_PRE>>
+      endif                                                       !DIC_SAT>>
+
+    if (do_13c) then  !{                                    !<<CARBON-13
+      vardesc_temp = vardesc&
+      ("co2_star","CO2* concentration",'h','L','s','mol kg-1','f')
+      bling%id_co2_star = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname,vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("jdi13c","DI13C source layer integral",'h','L','s','mol m-2 s-1','f')
+      bling%id_jdi13c = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname,vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("jdo13c","DO13C source layer integral",'h','L','s','mol m-2 s-1','f')
+      bling%id_jdo13c = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname,vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("alpha13_DIC_g","Equilibrium fractionation factor from gaseous CO2 to DIC",'h','L','s','unitless','f')
+      bling%id_alpha13_DIC_g = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname, vardesc_temp%units , missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("alpha13c_org","Fractionation from DIC to particulate organic carbon during photosynthesis",'h','L','s','unitless','f')
+      bling%id_alpha13c_org = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)           
+      vardesc_temp = vardesc&
+      ("b_di13c","Bottom flux of DI13C into sediment",'h','1','s','mol m-2 s-1','f')
+      bling%id_b_di13c = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("wrk1","BLING work array 1",'h','1','s','none','f')
+      bling%id_wrk1 = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("wrk2","BLING work array 2",'h','1','s','none','f')
+      bling%id_wrk2 = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("wrk3","BLING work array 3D",'h','L','s','none','f')
+      bling%id_wrk3 = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)           
+      vardesc_temp = vardesc&
+      ("c13_2_p","Ratio of DI13C to P during uptake",'h','L','s','mol kg-1','f')
+      bling%id_c13_2_p = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("c13o2_alpha","Saturation surface 13CO2* per uatm",'h','1','s','mol kg-1 atm-1','f')
+      bling%id_c13o2_alpha = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("c13o2_csurf","13CO2* concentration at surface",'h','1','s','mol kg-1','f')
+      bling%id_c13o2_csurf = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("fca13co3","Ca13CO3 sinking flux at layer bottom",'h','L','s','mol m-2 s-1','f')
+      bling%id_fca13co3 = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("fpo13c","PO13C sinking flux at layer bottom",'h','L','s','mol m-2 s-1','f')
+      bling%id_fpo13c = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+           init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      !vardesc_temp = vardesc&
+      !("j13c_remindvm","Diel vertical migrator 13C remineralization layer integral",'h','L','s','mol m-2 s-1','f')
+      !extras%id_j13c_remindvm = register_diag_field(package_name, trim(vardesc_temp%name) // extras%suffix,         &
+      !     axes(1:3), init_time, trim(vardesc_temp%longname) // extras%long_suffix,                                    &
+      !     vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("j13c_reminp","Sinking PO13C remineralization layer integral",'h','L','s','mol m-2 s-1','f')
+      bling%id_j13c_reminp = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+           init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("j13c_reminca","Ca13CO3 dissolution layer integral",'h','L','s','mol m-2 s-1','f')
+      bling%id_j13c_reminca = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+           init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("j13c_uptakeca","Ca13CO3 formation layer integral",'h','L','s','mol m-2 s-1','f')
+      bling%id_j13c_uptakeca = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+           init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("j13c_org","13c_org uptake production source layer integral",'h','L','s','mol m-2 s-1','f')
+      bling%id_j13c_org = register_diag_field(package_name, vardesc_temp%name, axes(1:3), &
+           init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("fca13co3_to_sed","Ca13CO3 sinking flux at ocean bottom",'h','1','s','mol m-2 s-1','f')
+      bling%id_fca13co3_to_sed = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      !vardesc_temp = vardesc&
+      !("R13dic","Ratio of dissolved 13DIC to 12DIC",'h','1','s','unitless','f')
+      !extras%id_R13dic = register_diag_field(package_name, trim(vardesc_temp%name) // extras%suffix,             &
+      !     axes(1:2), init_time, trim(vardesc_temp%longname) // extras%long_suffix,                                    &
+      !     vardesc_temp%units, missing_value = missing_value1) 
+    if (bury_caco3) then  !{                                 !<<BURY CACO3  
+      vardesc_temp = vardesc&
+      ("fca13csed_burial","Ca13CO3 permanent burial flux",'h','1','s','mol m-2 s-1','f')
+      bling%id_fca13csed_burial = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+      vardesc_temp = vardesc&
+      ("fca13csed_redis","Ca13CO3 redissolution from sediments",'h','1','s','mol m-2 s-1','f')
+      bling%id_fca13csed_redis = register_diag_field(package_name, vardesc_temp%name, axes(1:2), &
+          init_time, vardesc_temp%longname, vardesc_temp%units, missing_value = missing_value1)
+    endif  !}                                                !BURY CACO3>>
+         
+    endif  !}                                               !CARBON-13>>         
+
 
     endif                                                    !CARBON CYCLE>>
 
@@ -974,21 +1160,33 @@ write (stdlogunit, generic_bling_nml)
     !  formulation presented by Wanninkhof (1992, J. Geophys. Res., 97,
     !  7373-7382).
     !-----------------------------------------------------------------------
-    !New Wanninkhof numbers
-    call g_tracer_add_param('a1_co2', bling%a1_co2,  2068.9)
-    call g_tracer_add_param('a2_co2', bling%a2_co2, -118.63)
-    call g_tracer_add_param('a3_co2', bling%a3_co2,  2.9311)
-    call g_tracer_add_param('a4_co2', bling%a4_co2, -0.027)
+    !New Wanninkhof numbers (this is a personnal comm Wanninkhof to Dunne, see Dunne et al. 2012 supp)
+    !call g_tracer_add_param('a1_co2', bling%a1_co2,  2068.9)
+    !call g_tracer_add_param('a2_co2', bling%a2_co2, -118.63)
+    !call g_tracer_add_param('a3_co2', bling%a3_co2,  2.9311)
+    !call g_tracer_add_param('a4_co2', bling%a4_co2, -0.027)
+    ! Wanninkhof 2014
+    call g_tracer_add_param('a1_co2', bling%a1_co2,    2116.8)
+    call g_tracer_add_param('a2_co2', bling%a2_co2,   -136.25)
+    call g_tracer_add_param('a3_co2', bling%a3_co2,    4.7353)
+    call g_tracer_add_param('a4_co2', bling%a4_co2, -0.092307)
+    call g_tracer_add_param('a5_co2', bling%a5_co2, 0.0007555)
     !---------------------------------------------------------------------
     !  Compute the Schmidt number of O2 in seawater using the 
     !  formulation proposed by Keeling et al. (1998, Global Biogeochem.
     !  Cycles, 12, 141-163).
     !---------------------------------------------------------------------
-    !New Wanninkhof numbers
-    call g_tracer_add_param('a1_o2', bling%a1_o2, 1929.7)
-    call g_tracer_add_param('a2_o2', bling%a2_o2, -117.46)
-    call g_tracer_add_param('a3_o2', bling%a3_o2, 3.116)
-    call g_tracer_add_param('a4_o2', bling%a4_o2, -0.0306)
+    !New Wanninkhof numbers (this is a personnal comm Wanninkhof to Dunne, see Dunne et al. 2012 supp)
+    !call g_tracer_add_param('a1_o2', bling%a1_o2, 1929.7)
+    !call g_tracer_add_param('a2_o2', bling%a2_o2, -117.46)
+    !call g_tracer_add_param('a3_o2', bling%a3_o2, 3.116)
+    !call g_tracer_add_param('a4_o2', bling%a4_o2, -0.0306)
+    ! Wanninkhof 2014
+    call g_tracer_add_param('a1_o2', bling%a1_o2, 1920.4)
+    call g_tracer_add_param('a2_o2', bling%a2_o2, -135.6)
+    call g_tracer_add_param('a3_o2', bling%a3_o2, 5.2122)
+    call g_tracer_add_param('a4_o2', bling%a4_o2, -0.10939)
+    call g_tracer_add_param('a5_o2', bling%a5_o2, 0.00093777)
 
     call g_tracer_add_param('htotal_scale_lo', bling%htotal_scale_lo, 0.01)
     call g_tracer_add_param('htotal_scale_hi', bling%htotal_scale_hi, 100.0)
@@ -1129,6 +1327,7 @@ write (stdlogunit, generic_bling_nml)
 
     ! Radiocarbon
     call g_tracer_add_param('half_life_14c', bling%half_life_14c, 5730.0 )       ! a
+    !call g_tracer_add_param('half_life_14c', bling%half_life_14c, 50.0 )       ! a
 
     !
     !-----------------------------------------------------------------------
@@ -1229,6 +1428,14 @@ write (stdlogunit, generic_bling_nml)
     call g_tracer_add_param('kfe_org', bling%kfe_org, 0.5/sperd)                 ! g org-1 m3 s-1
     !
     !-----------------------------------------------------------------------
+    !    Carbon 13
+    !
+    call g_tracer_add_param('alpha13c_caco3'    , bling%alpha13c_caco3    , 1.001    ) ! unitless
+    call g_tracer_add_param('alpha13c_askinetic', bling%alpha13c_askinetic, 0.99915  ) ! unitless
+    call g_tracer_add_param('alpha13c_aq_g'     , bling%alpha13c_aq_g     , 0.998764 ) ! unitless
+    !call g_tracer_add_param('r13Cvpdb'          , bling%r13cvpdb          , 0.0111123) ! unitless
+    !
+    !-----------------------------------------------------------------------
     ! Miscellaneous
     !-----------------------------------------------------------------------
     !
@@ -1294,6 +1501,7 @@ write (stdlogunit, generic_bling_nml)
          units      = 'mol/kg',                 &
          prog       = .true.,                   &
          flux_runoff    = .false.,              &
+         !flux_runoff    = .true.,               &
          flux_wetdep    = .true.,               &
          flux_drydep    = .true.,               &
          flux_param     = (/ 55.847e-03 /),     &
@@ -1326,7 +1534,7 @@ write (stdlogunit, generic_bling_nml)
          flux_gas_name  = 'o2_b_flux',                              &
          flux_gas_type  = 'air_sea_gas_flux',                       &
          flux_gas_molwt = WTMO2,                                    &
-         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),               &
+         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
          flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc' )
 
     !
@@ -1421,7 +1629,8 @@ write (stdlogunit, generic_bling_nml)
            longname   = 'Alkalinity',            &
            units      = 'mol/kg',                &
            prog       = .true.,                  &
-           flux_runoff    = .false.,             &
+           !flux_runoff    = .false.,             &
+           flux_runoff    = .true.,             &
            flux_param     = (/ 1.0e-03 /),       &
            flux_bottom    = .true.           )
       endif                                                    !BURY CACO3>>
@@ -1435,11 +1644,13 @@ write (stdlogunit, generic_bling_nml)
          prog       = .true.,                        &
          flux_gas       = .true.,                    &
          flux_gas_name  = 'co2_b_flux',              &
-         flux_gas_type  = 'air_sea_gas_flux',        &
+         !flux_gas_type  = 'air_sea_gas_flux',        &
+         flux_gas_type  = 'air_sea_gas_flux_generic',&
          flux_gas_molwt = WTMCO2,                    &
-         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),&
+         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
          flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',  &
-         flux_runoff    = .false.,                   &
+         !flux_runoff    = .false.,                   &
+         flux_runoff    = .true.,                    &
          flux_param     = (/12.011e-03  /),          &
          flux_bottom    = .true.,                    &
          init_value     = 0.001)
@@ -1479,6 +1690,20 @@ write (stdlogunit, generic_bling_nml)
            longname   = 'Preformed DIC',           &
            units      = 'mol/kg',                  &
            prog       = .true.)
+      !          
+      !       DI13C_pre
+      !
+        if (do_13c) then
+          call g_tracer_add(tracer_list,package_name,  &
+             name       = 'di13c_pre',                 &
+             longname   = 'Preformed DI13C scaled',    &
+             units      = 'mol/kg',                    &
+             prog       = .true.)
+        endif
+      !
+      endif
+
+      if (do_carbon_sat) then 
       !   
       !       DIC_sat (Saturation Dissolved inorganic carbon)
       !
@@ -1491,7 +1716,7 @@ write (stdlogunit, generic_bling_nml)
            flux_gas_name  = 'co2_sat_flux',            &
            flux_gas_type  = 'air_sea_gas_flux',        &
            flux_gas_molwt = WTMCO2,                    &
-           flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),&
+           flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
            flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',  &
            flux_param     = (/12.011e-03  /),          &
            init_value     = 0.001)
@@ -1507,8 +1732,7 @@ write (stdlogunit, generic_bling_nml)
            prog       = .false.,                        &
            init_value = bling%htotal_in)
       endif                                                       !DIC_PRE>>
- 
- 
+
       if (do_14c) then                                        !<<RADIOCARBON
       !       D14IC (Dissolved inorganic radiocarbon)
       !
@@ -1520,22 +1744,58 @@ write (stdlogunit, generic_bling_nml)
          flux_gas       = .true.,                       &
          flux_gas_name  = 'c14o2_flux',                 &
          flux_gas_type  = 'air_sea_gas_flux',           &
-         flux_gas_molwt = WTMCO2,                       &
-         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),   &
+         flux_gas_molwt = 45.00995,                     &
+         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
          flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',  &
          flux_param     = (/14.e-03  /),                &
-         flux_bottom    = .true.,                       &
+         !flux_bottom    = .true.,                       &
+         flux_bottom    = .false.,                       &
          init_value     = 0.001)
       !
       !       DO14C (Dissolved organic radiocarbon)
       !
-      call g_tracer_add(tracer_list,package_name, &
-         name       = 'do14c',                    &
-         longname   = 'DO14C',                    &
-         units      = 'mol/kg',                   &
-         prog       = .true.)
+      !call g_tracer_add(tracer_list,package_name, &
+      !   name       = 'do14c',                    &
+      !   longname   = 'DO14C',                    &
+      !   units      = 'mol/kg',                   &
+      !   prog       = .true.)
+
       endif                                                   !RADIOCARBON>>
 
+      if (do_13c) then                                          !<<CARBON-13
+      !
+        call g_tracer_add(tracer_list, package_name,                   &
+             name           = 'di13c',                                 &
+             longname       = 'Dissolved Inorganic Carbon-13)',        &
+             units          = 'mol/kg',                                &
+             prog           = .true.,                                  &
+             flux_gas       = .true.,                                  & 
+             flux_gas_type  = 'air_sea_gas_flux',                      &
+             flux_gas_name  = 'c13o2_flux',                            &
+             flux_gas_molwt = 45.00995,                                &
+             flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
+             flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',&
+             flux_param     = (/ 13.e-03 /),                           &
+             flux_runoff    = .true.,                                  &
+             flux_bottom    = .true.)
+!
+         call g_tracer_add(tracer_list, package_name, &
+              name       = 'do13c' ,                  &
+              longname   = 'Dissolved organic 13C' ,  &
+              units      = 'mol/kg',                  &
+              prog       = .true.                      )                 
+
+         if (bury_caco3) then                                !<<BURYCACO3  
+           call g_tracer_add(tracer_list, package_name,        &
+               name       = 'ca13csed',                        &
+               longname   = 'Sediment Ca13CO3 concentration',  &
+               units      = 'mol m-3',                         &
+               prog       = .false. )
+         endif                                               !BURY CACO3>>
+      else
+!
+      endif                                                     !CARBON-13>> 
+ 
     endif                                                    !CARBON CYCLE>>
 
   end subroutine user_add_tracers
@@ -1737,6 +1997,8 @@ write (stdlogunit, generic_bling_nml)
          pCO2surf=bling%pco2_surf(:,:), &
          co3_ion=bling%f_co3_ion(:,:,k))
 
+!print*, '*CNT0*', k, minval(bling%co2_csurf(isc:iec,jsc:jec))
+
     do k = 2, nk
        do j = jsc, jec ; do i = isc, iec  !{
           bling%htotallo(i,j) = bling%htotal_scale_lo * bling%f_htotal(i,j,k)
@@ -1753,15 +2015,73 @@ write (stdlogunit, generic_bling_nml)
                                 !InOut
             bling%f_htotal(:,:,k),                       & 
                                 !OUT
+            co2star=bling%co2_star(:,:,k),               &  
             co3_ion=bling%f_co3_ion(:,:,k))
+
+!print*, '*CNT0*', k, minval(bling%co2_star(isc:iec,jsc:jec,k))
+
     enddo
 
-    call g_tracer_set_values(tracer_list,'htotal_b','field',bling%f_htotal  ,isd,jsd,ntau=1)
-    call g_tracer_set_values(tracer_list,'co3_ion_b','field',bling%f_co3_ion  ,isd,jsd,ntau=1)
-    call g_tracer_set_values(tracer_list,'dic_b','alpha',bling%co2_alpha    ,isd,jsd)
-    call g_tracer_set_values(tracer_list,'dic_b','csurf',bling%co2_csurf    ,isd,jsd)
+    call g_tracer_set_values(tracer_list,'htotal_b' ,'field',bling%f_htotal     ,isd,jsd,ntau=1)
+    call g_tracer_set_values(tracer_list,'co3_ion_b','field',bling%f_co3_ion,isd,jsd,ntau=1)
+    call g_tracer_set_values(tracer_list,'dic_b'    ,'alpha',bling%co2_alpha    ,isd,jsd)
+    call g_tracer_set_values(tracer_list,'dic_b'    ,'csurf',bling%co2_csurf    ,isd,jsd)
 
-      if (do_carbon_pre) then                                     !<<DIC_PRE  
+    if (do_13c) then
+
+      call g_tracer_get_values(tracer_list,'di13c','field', bling%f_di13c,isd,jsd,ntau=tau)
+      call g_tracer_get_values(tracer_list,'do13c','field', bling%f_do13c,isd,jsd,ntau=tau, positive=.true.)
+
+      do j = jsc, jec ; do i = isc, iec   !{
+
+        ! Set first layer of co2_star equal to co2_csurf. This will be used later for do_13c
+        bling%co2_star(i,j,1)=bling%co2_csurf(i,j)
+
+        ! The following is the Zhang et al (1995) temperature (in C) dependent equilibrium
+        ! fractionation factor from gaseous CO2 to DIC:
+        do k=1,nk
+          bling%alpha13_DIC_g(i,j,k)=1.01051-1.05e-4*Temp(i,j,k)
+        enddo
+
+        !! The true ratio of DI13C to DI12C in the surface ocean, R13dic, is calculated.
+        !!(The concentration of the tracer DI13C carried by the model is scaled
+        !! by 1/r13cvpdb to minimize numerical error).
+
+        !!bling%R13dic = bling%f_di13c(i,j,1)*bling%r13cvpdb / &
+        !!        (epsln + bling%f_dic(i,j,1)-bling%f_di13c(i,j,1)*bling%r13cvpdb)
+        !bling%R13dic = bling%f_di13c(i,j,1)*bling%r13cvpdb/(epsln + bling%f_dic(i,j,1))
+        bling%R13dic = bling%f_di13c(i,j,1)/(epsln + bling%f_dic(i,j,1))
+
+        ! C13O2_csurf and C13O2_alpha are divided by r13cvpdb to scale their
+        ! values to that of DIC. C13O2_csurf is CO2_csurf multiplied by the
+        ! fractional abundance of 13CO2 and the kinetic fractionation factor.
+        ! Schmittner et al. 2013 calculate R13CO2 using
+        ! R13CO2=bling%R13dic(i,j)*extras%alpha13c_aq_g/extras%alpha13_DIC_g(i,j,1). 
+        ! To find the fractional abundance we use r13CO2=R13CO2/(1+R13CO2)
+        
+        bling%alpha_aq_DIC=bling%alpha13c_aq_g/bling%alpha13_DIC_g(i,j,1)
+
+        !bling%c13o2_csurf(i,j)= bling%co2_csurf(i,j)*bling%alpha13c_askinetic*                         &
+        !                       (bling%R13dic*bling%alpha_aq_DIC)/(1+(bling%R13dic*bling%alpha_aq_DIC)) &
+        !                       /bling%r13cvpdb
+        bling%c13o2_csurf(i,j)= bling%co2_csurf(i,j)*bling%alpha13c_askinetic*                         &
+                                bling%R13dic*bling%alpha_aq_DIC
+                                !bling%R13dic*bling%alpha_aq_DIC/bling%r13cvpdb
+
+        ! C13O2_alpha is CO2_alpha multiplied by the kinetic fractionation
+        ! factor. The fractional abundance of 13CO2 is included in the c13o2 gas
+        ! concentration supplied by the script
+
+        bling%c13o2_alpha(i,j)=bling%co2_alpha(i,j)*bling%alpha13c_askinetic*bling%alpha13c_aq_g  
+
+      enddo ; enddo !} i,j
+
+      call g_tracer_set_values(tracer_list,'di13c','alpha',bling%c13o2_alpha,isd,jsd)
+      call g_tracer_set_values(tracer_list,'di13c','csurf',bling%c13o2_csurf,isd,jsd)
+
+    endif
+
+      if (do_carbon_sat) then                                     !<<DIC_SAT
 
     call g_tracer_get_values(tracer_list,'htotal_sat' ,'field',bling%f_htotal_sat,isd,jsd,ntau=1)
     call g_tracer_get_values(tracer_list,'dic_sat'    ,'field',bling%f_dic_sat ,isd,jsd,ntau=tau)
@@ -1820,7 +2140,7 @@ write (stdlogunit, generic_bling_nml)
     call g_tracer_set_values(tracer_list,'dic_sat','alpha',bling%co2_alpha        ,isd,jsd)
     call g_tracer_set_values(tracer_list,'dic_sat','csurf',bling%co2_sat_csurf    ,isd,jsd)
 
-      endif                                                       !DIC_PRE>>
+      endif                                                       !DIC_SAT>>
     
       if (do_14c) then                                        !<<RADIOCARBON
       
@@ -1829,7 +2149,7 @@ write (stdlogunit, generic_bling_nml)
 
     call g_tracer_get_values(tracer_list,'di14c' ,'field', bling%f_di14c,isd,jsd,ntau=tau)
     ! This is not used until later, but get it now
-    call g_tracer_get_values(tracer_list,'do14c' ,'field', bling%f_do14c,isd,jsd,ntau=tau,positive=.true.)
+    !call g_tracer_get_values(tracer_list,'do14c' ,'field', bling%f_do14c,isd,jsd,ntau=tau,positive=.true.)
     
        do j = jsc, jec ; do i = isc, iec  !{
        bling%c14o2_csurf(i,j) =  bling%co2_csurf(i,j) *                &
@@ -1857,9 +2177,17 @@ write (stdlogunit, generic_bling_nml)
     call g_tracer_get_values(tracer_list,'po4_pre'  ,'field',bling%f_po4_pre   ,isd,jsd,ntau=tau,positive=.true.)
     
     if (do_carbon) then
-    call g_tracer_get_values(tracer_list,'co3_ion_b','field',bling%f_co3_ion   ,isd,jsd,ntau=1,positive=.true.)
-      if (bury_caco3) &
-      call g_tracer_get_values(tracer_list,'cased_b'    ,'field',bling%f_cased     ,isd,jsd,ntau=1)
+      call g_tracer_get_values(tracer_list,'co3_ion_b','field',bling%f_co3_ion   ,isd,jsd,ntau=1,positive=.true.)
+      if (bury_caco3) then
+        call g_tracer_get_values(tracer_list,'cased_b'    ,'field',bling%f_cased     ,isd,jsd,ntau=1)
+        if (do_13c) &
+          call g_tracer_get_values(tracer_list,'ca13csed' ,'field',bling%f_ca13csed  ,isd,jsd,ntau=1)
+
+do j=jsc,jec; do i=isc,iec
+  bling%wrk1(i,j)=bling%f_ca13csed(i,j,1)/bling%f_cased(i,j,1)
+enddo; enddo
+
+      endif
     endif
 
     bling%zt = 0.0
@@ -2130,22 +2458,55 @@ write (stdlogunit, generic_bling_nml)
     ! with the findings of Jin et al. (GBC,2006).
     !-----------------------------------------------------------------------
 
+      do k = 1, nk ; do j = jsc, jec ; do i = isc, iec   !{
+          bling%jca_uptake(i,j,k) = (1. - bling%frac_lg(i,j,k)) *        &
+          bling%jp_uptake(i,j,k) * bling%ca_2_p
+      enddo; enddo ; enddo !} i,j,k
+
+!print*, '**CNT**', minval(bling%alpha13_DIC_g(isc:iec,jsc:jec,1:nk)), maxval(bling%alpha13_DIC_g(isc:iec,jsc:jec,1:nk))
+
+      if (do_13c) then                                       !<<CARBON-13
+
          do k = 1, nk ; do j = jsc, jec ; do i = isc, iec   !{
-            bling%jca_uptake(i,j,k) = (1. - bling%frac_lg(i,j,k)) *        &
-              bling%jp_uptake(i,j,k) * bling%ca_2_p
+
+         ! The organic fractionation ratio is coded as according to Schmittner et al. 2013.
+         ! This factor is dependent on the fractionation between CO2* and DIC and the concentration
+         ! of CO2* in umol/L (Popp et al. 1989). A unit conversion is thus required between 
+         ! mol/kg to umol/L
+
+           if (bling%co2_star(i,j,k) .lt. 0) bling%co2_star(i,j,k)=0.d0
+
+           bling%alpha13c_org(i,j,k)= bling%alpha13c_aq_g/(bling%alpha13_DIC_g(i,j,k))* &
+                                      (-0.017*log10(bling%co2_star(i,j,k)*bling%Rho_0*1000.d0+epsln)+1.0034)
+     
+         ! The uptake ratio of Carbon-13 to carbon is given by the organic fractionation factor.
+         ! This will be used in the sinking and remineralization, below.
+      
+           bling%c13_2_p(i,j,k) = bling%alpha13c_org (i,j,k) * bling%c_2_p * &
+                                  bling%f_di13c(i,j,k)/(epsln + bling%f_dic(i,j,k))
+
+         ! Calculate the production of suspended & dissolved organic 13C during growth, as well 
+         ! as the production of sinking Ca13CO3.
+           bling%j13c_org(i,j,k) = bling%phi_dop*(bling%jp_uptake(i,j,k)-bling%jpop(i,j,k))*bling%c13_2_p(i,j,k)
+      
+           bling%j13c_uptakeca(i,j,k) = bling%alpha13c_caco3 * bling%jca_uptake(i,j,k) *          &
+                                        bling%f_di13c(i,j,k) / (epsln + bling%f_dic(i,j,k))  
+
          enddo; enddo ; enddo !} i,j,k
+      endif                                                   !CARBON-13>>
+
        
-      if (do_14c) then                                        !<<RADIOCARBON
-         do k = 1, nk ; do j = jsc, jec ; do i = isc, iec   !{
+      !if (do_14c) then                                        !<<RADIOCARBON
+      !   do k = 1, nk ; do j = jsc, jec ; do i = isc, iec   !{
 
-          bling%c14_2_p(i,j,k) = bling%c_2_p *                             &
-            bling%f_di14c(i,j,k) / (epsln + bling%f_dic(i,j,k))
+      !    bling%c14_2_p(i,j,k) = bling%c_2_p *                             &
+      !      bling%f_di14c(i,j,k) / (epsln + bling%f_dic(i,j,k))
 
-          bling%jdo14c(i,j,k) = bling%phi_dop * (bling%jp_uptake(i,j,k) -  &
-            bling%jpop(i,j,k)) * bling%c14_2_p(i,j,k)
+      !    bling%jdo14c(i,j,k) = bling%phi_dop * (bling%jp_uptake(i,j,k) -  &
+      !      bling%jpop(i,j,k)) * bling%c14_2_p(i,j,k)
             
-         enddo; enddo ; enddo !} i,j,k
-      endif                                                   !RADIOCARBON>>
+      !   enddo; enddo ; enddo !} i,j,k
+      !endif                                                   !RADIOCARBON>>
        
     endif                                                    !CARBON CYCLE>>
 
@@ -2231,31 +2592,77 @@ write (stdlogunit, generic_bling_nml)
        
     enddo; enddo ; enddo !} i,j,k
 
+      if (do_13c) then                                        !<<CARBON-13
+
+      ! Exported 13C is generated from the local ratio of 13C/12C, multiplied by the 
+      ! organic fractionation factor, and tied to N through a fixed C:N. 
+      ! Therefore, jpop can be used to calculate fpo13c.
+
+      do j = jsc, jec ; do i = isc, iec  !{
+        bling%fpo13c(i,j,1) = bling%jpop(i,j,1)*bling%c13_2_p(i,j,1)*rho_dzt(i,j,1) / &
+                              (1.0+dzt(i,j,1)*bling%zremin(i,j,1))
+
+        bling%j13c_reminp(i,j,1) = (  bling%jpop(i,j,1)*bling%c13_2_p(i,j,1)*rho_dzt(i,j,1) &
+                                    - bling%fpo13c(i,j,1))/(epsln+rho_dzt(i,j,1))
+      enddo ; enddo 
+
+      do k = 2, nk ; do j = jsc, jec ; do i = isc, iec   !{
+         bling%fpo13c(i,j,k) = (bling%fpo13c(i,j,k-1)+bling%jpop(i,j,k)*bling%c13_2_p(i,j,k)*rho_dzt(i,j,k))/ & 
+                                (1.0 + dzt(i,j,k) * bling%zremin(i,j,k))
+
+         bling%j13c_reminp(i,j,k) = ( bling%fpo13c(i,j,k-1)+bling%jpop(i,j,k)*bling%c13_2_p(i,j,k)*rho_dzt(i,j,k) &
+                                     -bling%fpo13c(i,j,k)) / (epsln+ rho_dzt(i,j,k))
+      enddo; enddo ; enddo !} i,j,k
+
+      ! The Ca13CO3 sinking flux is produced analogously to organic particles,
+      ! from jc_uptakeca, and dissolved through the water column. For carbonate,
+      ! fractionation is ignored (see above), so the export is simply a function 
+      ! of the local 13C/12C.
+
+      do j = jsc, jec ; do i = isc, iec  !{
+        bling%fca13co3(i,j,1) = bling%j13c_uptakeca(i,j,1)*rho_dzt(i,j,1)/ &
+                               (1.0+dzt(i,j,1)*bling%zremin_caco3(i,j,1)) 
+
+        bling%j13c_reminca(i,j,1) = ( bling%j13c_uptakeca(i,j,1)*rho_dzt(i,j,1) &
+                                     -bling%fca13co3(i,j,1))/(epsln+rho_dzt(i,j,1))
+      enddo ; enddo 
+
+      do k = 2, nk ; do j = jsc, jec ; do i = isc, iec   !{
+        bling%fca13co3(i,j,k) = (bling%fca13co3(i,j,k-1)+bling%j13c_uptakeca(i,j,k)*rho_dzt(i,j,k)) &
+                               /(1.0+dzt(i,j,k)*bling%zremin_caco3(i,j,k))
+
+        bling%j13c_reminca(i,j,k)=( bling%fca13co3(i,j,k-1)+bling%j13c_uptakeca(i,j,k)*rho_dzt(i,j,k) &
+                                   -bling%fca13co3(i,j,k)) / (epsln+rho_dzt(i,j,k))
+        
+      enddo; enddo ; enddo !} i,j,k
+
+      endif                                                   !CARBON-13>>
+
       if (do_14c) then                                        !<<RADIOCARBON
 
       ! Sinking particulate 14C is generated in the local ratio of 14C/12C
       ! to sinking 12C, which itself is strictly tied to P through a fixed
       ! C:P. Therefore, jpop can be used to calculate fpo14c.
 
-      do j = jsc, jec ;      do i = isc, iec   !{
-        bling%fpo14c(i,j,1) = bling%jpop(i,j,1) * bling%c14_2_p(i,j,1) *   &
-          rho_dzt(i,j,1) /                                                 &
-          (1.0 + dzt(i,j,1) * bling%zremin(i,j,1)) 
+      !do j = jsc, jec ;      do i = isc, iec   !{
+      !  bling%fpo14c(i,j,1) = bling%jpop(i,j,1) * bling%c14_2_p(i,j,1) *   &
+      !    rho_dzt(i,j,1) /                                                 &
+      !    (1.0 + dzt(i,j,1) * bling%zremin(i,j,1)) 
 
-        bling%j14c_reminp(i,j,1) = (bling%jpop(i,j,1) *                    &
-          bling%c14_2_p(i,j,1) * rho_dzt(i,j,1) - bling%fpo14c(i,j,1)) /   &
-         (epsln + rho_dzt(i,j,1))
-      enddo; enddo !} i,j
+      !  bling%j14c_reminp(i,j,1) = (bling%jpop(i,j,1) *                    &
+      !    bling%c14_2_p(i,j,1) * rho_dzt(i,j,1) - bling%fpo14c(i,j,1)) /   &
+      !   (epsln + rho_dzt(i,j,1))
+      !enddo; enddo !} i,j
 
-      do k = 2, nk ; do j = jsc, jec ; do i = isc, iec   !{
-        bling%fpo14c(i,j,k) = (bling%fpo14c(i,j,k-1) +                     &
-          bling%jpop(i,j,k) * bling%c14_2_p(i,j,k) * rho_dzt(i,j,k)) /     &
-          (1.0 + dzt(i,j,k) * bling%zremin(i,j,k)) 
+      !do k = 2, nk ; do j = jsc, jec ; do i = isc, iec   !{
+      !  bling%fpo14c(i,j,k) = (bling%fpo14c(i,j,k-1) +                     &
+      !    bling%jpop(i,j,k) * bling%c14_2_p(i,j,k) * rho_dzt(i,j,k)) /     &
+      !    (1.0 + dzt(i,j,k) * bling%zremin(i,j,k)) 
 
-        bling%j14c_reminp(i,j,k) = (bling%fpo14c(i,j,k-1) +                &
-         bling%jpop(i,j,k) * bling%c14_2_p(i,j,k) * rho_dzt(i,j,k) -       &
-         bling%fpo14c(i,j,k)) / (epsln + rho_dzt(i,j,k))
-      enddo; enddo ; enddo !} i,j,k
+      !  bling%j14c_reminp(i,j,k) = (bling%fpo14c(i,j,k-1) +                &
+      !   bling%jpop(i,j,k) * bling%c14_2_p(i,j,k) * rho_dzt(i,j,k) -       &
+      !   bling%fpo14c(i,j,k)) / (epsln + rho_dzt(i,j,k))
+      !enddo; enddo ; enddo !} i,j,k
 
      ! Decay the radiocarbon in both DIC and DOC
      
@@ -2266,8 +2673,8 @@ write (stdlogunit, generic_bling_nml)
         bling%j14c_decay_dic(i,j,k) = bling%f_di14c(i,j,k) *               &
           bling%lambda_14c 
 
-        bling%j14c_decay_doc(i,j,k) = bling%f_do14c(i,j,k) *               &
-          bling%lambda_14c 
+      !  bling%j14c_decay_doc(i,j,k) = bling%f_do14c(i,j,k) *               &
+      !    bling%lambda_14c 
 
       enddo; enddo ; enddo !} i,j,k
       endif                                                   !RADIOCARBON>>
@@ -2494,17 +2901,22 @@ write (stdlogunit, generic_bling_nml)
              bling%c_2_p * spery)**(2.83) * (bling%sed_flux +              &
              bling%fcaco3(i,j,k) * 100.0 * spery)**(-1.84) *               &
              bling%f_cased(i,j,1)
+
            bling%fcased_burial(i,j) = max(0.0, bling%fcaco3(i,j,k) *       &
              bling%f_cased(i,j,1) / 8.1e3)
+
            bling%f_cased(i,j,1) = bling%f_cased(i,j,1) +                   &
              (bling%fcaco3(i,j,k) - bling%fcased_redis(i,j) -              &
              bling%fcased_burial(i,j)) / bling%z_sed * dt *                &
              grid_tmask(i,j,k)
+
            bling%b_alk(i,j) = - 2. * bling%fcased_redis(i,j) +             &
              bling%fpop(i,j,k) * bling%n_2_p
+
            ! Do not bury any C-org - all goes back to water column  
            bling%b_dic(i,j) = - bling%fpop(i,j,k) * bling%c_2_p -          &
              bling%fcased_redis(i,j)
+
            else
            !----------------------------------------------------------------
            !   Conserve alkalinity in the ocean
@@ -2521,16 +2933,57 @@ write (stdlogunit, generic_bling_nml)
       call g_tracer_set_values(tracer_list,'alk_b', 'btf', bling%b_alk ,isd,jsd)
       call g_tracer_set_values(tracer_list,'dic_b', 'btf', bling%b_dic ,isd,jsd)
 
-      if (do_14c) then                                        !<<RADIOCARBON
-      do j = jsc, jec ; do i = isc, iec  !{
-         k = grid_kmt(i,j)
-         if (k .gt. 0) then !{
-           bling%b_di14c(i,j) = - bling%fpo14c(i,j,k)
-         endif  
-      enddo; enddo  !} i, j
+      if (do_13c) then                                        !<<CARBON-13
+        do j = jsc, jec ; do i = isc, iec
+          k = grid_kmt(i,j)
+          if (k .gt. 0) then 
+            bling%fca13co3_to_sed(i,j) = bling%fca13co3(i,j,k)
 
-     call g_tracer_set_values(tracer_list,'di14c','btf',bling%b_di14c,isd,jsd)
-      endif                                                   !RADIOCARBON>>
+            if (bury_caco3) then
+            !-----------------------------------------------------------------
+            ! For Ca13CO3, it is assumed that the 13C/12C is homogenous within the
+            ! active mixed layer of sediment. Therefore, the redissolution and burial
+            ! fluxes are simply proportional to the total redissolution and burial 
+            ! times the 13C/C of the sediment, the latter of which is ca13csed/cased.
+
+              bling%fca13csed_redis(i,j) =                        &
+                max(0.0, min(0.5*bling%f_ca13csed(i,j,1)/dt,      &
+                bling%fcased_redis(i,j)*bling%wrk1(i,j)))
+                !bling%fcased_redis(i,j)*bling%f_ca13csed(i,j,1)/(epsln+bling%f_cased(i,j,1))))
+
+              bling%fca13csed_burial(i,j)= max(0.0,  &
+                !bling%fcased_burial(i,j)*bling%f_ca13csed(i,j,1)/(epsln+bling%f_cased(i,j,1)))
+                bling%fcased_burial(i,j)*bling%wrk1(i,j))
+
+              bling%f_ca13csed(i,j,1) = bling%f_ca13csed(i,j,1) + &
+               (bling%fca13co3(i,j,k)-bling%fca13csed_redis(i,j)- & 
+               bling%fca13csed_burial(i,j))/bling%z_sed         * &
+                dt*grid_tmask(i,j,k)
+
+              ! The total flux of DI13C to the bottom water is the total organic flux
+              ! (no burial) plus the dissolved Ca13CO3.
+              bling%b_di13c(i,j) = -bling%fpo13c(i,j,k)-bling%fca13csed_redis(i,j)
+
+            else
+              bling%b_di13c(i,j) = -bling%fpo13c(i,j,k)-bling%fca13co3(i,j,k)
+            endif 
+          endif 
+        enddo; enddo  !} i, j
+
+        call g_tracer_set_values(tracer_list,'di13c', 'btf', bling%b_di13c,isd,jsd)
+
+      endif                                                   !CARBON-13>>
+
+      !if (do_14c) then                                        !<<RADIOCARBON
+      !do j = jsc, jec ; do i = isc, iec  !{
+      !   k = grid_kmt(i,j)
+      !   if (k .gt. 0) then !{
+      !     bling%b_di14c(i,j) = - bling%fpo14c(i,j,k)
+      !   endif  
+      !enddo; enddo  !} i, j
+
+      !call g_tracer_set_values(tracer_list,'di14c','btf',bling%b_di14c,isd,jsd)
+      !endif                                                   !RADIOCARBON>>
       
     endif                                                    !CARBON CYCLE>>
 
@@ -2556,12 +3009,19 @@ write (stdlogunit, generic_bling_nml)
 
     if (do_14c) then
     call g_tracer_get_pointer(tracer_list,'di14c','field',bling%p_di14c)
-    call g_tracer_get_pointer(tracer_list,'do14c','field',bling%p_do14c)
+    !call g_tracer_get_pointer(tracer_list,'do14c','field',bling%p_do14c)
+    endif 
+
+    if (do_13c) then
+    call g_tracer_get_pointer(tracer_list,'di13c','field',bling%p_di13c)
+    call g_tracer_get_pointer(tracer_list,'do13c','field',bling%p_do13c)
     endif 
 
     if (do_carbon_pre) then 
     call g_tracer_get_pointer(tracer_list,'alk_pre','field',bling%p_alk_pre)
     call g_tracer_get_pointer(tracer_list,'dic_pre','field',bling%p_dic_pre)
+
+      if (do_13c) call g_tracer_get_pointer(tracer_list,'di13c_pre','field',bling%p_di13c_pre)
     endif
 
     do k = 1, nk ; do j = jsc, jec ; do i = isc, iec  !{
@@ -2590,12 +3050,17 @@ write (stdlogunit, generic_bling_nml)
        ! Add first-order decay and generation from sinking particles
        ! to jprod, initially produced in Uptake above.
        !
+
+
        bling%jdop(i,j,k) = bling%jdop(i,j,k) + bling%phi_dop *             &
          bling%jp_reminp(i,j,k) - bling%gamma_dop * bling%f_dop(i,j,k)
          
+!if (k .eq. grid_kmt(i,j)) bling%wrk2(i,j)=-bling%gamma_dop*bling%f_dop(i,j,k)
+
        bling%p_dop(i,j,k,tau) = bling%p_dop(i,j,k,tau)+bling%jdop(i,j,k) * &
         dt * grid_tmask(i,j,k)
 
+    bling%wrk3(i,j,k)=bling%f_dop(i,j,k)+bling%jdop(i,j,k)*dt*grid_tmask(i,j,k)
     !-----------------------------------------------------------------------
     !     O2
     ! Assuming constant P:O ratio.
@@ -2623,33 +3088,56 @@ write (stdlogunit, generic_bling_nml)
        bling%p_alk(i,j,k,tau) = bling%p_alk(i,j,k,tau) + (2. *             &
          (bling%jca_reminp(i,j,k) - bling%jca_uptake(i,j,k)) -             &
          bling%jpo4(i,j,k) * bling%n_2_p) * dt * grid_tmask(i,j,k)
-         
+ 
        bling%p_dic(i,j,k,tau) = bling%p_dic(i,j,k,tau) +                   &
          (bling%jpo4(i,j,k) * bling%c_2_p + bling%jca_reminp(i,j,k) -      &
          bling%jca_uptake(i,j,k)) * dt * grid_tmask(i,j,k)
        
       if (do_14c) then                                        !<<RADIOCARBON
-       bling%jdi14c(i,j,k) = (bling%jp_recycle(i,j,k) -                    &
-         bling%jp_uptake(i,j,k)) * bling%c14_2_p(i,j,k) +                  &
-         (1. - bling%phi_dop) * bling%j14c_reminp(i,j,k) +                 &
-         (bling%gamma_dop * bling%f_do14c(i,j,k)) 
+       !bling%jdi14c(i,j,k) = (bling%jp_recycle(i,j,k) -                    &
+       !  bling%jp_uptake(i,j,k)) * bling%c14_2_p(i,j,k) +                  &
+       !  (1. - bling%phi_dop) * bling%j14c_reminp(i,j,k) +                 &
+       !  (bling%gamma_dop * bling%f_do14c(i,j,k)) 
   
-       bling%p_di14c(i,j,k,tau) = bling%p_di14c(i,j,k,tau) +               &
-         (bling%jdi14c(i,j,k) - bling%j14c_decay_dic(i,j,k)) * dt          &
-         * grid_tmask(i,j,k)
+       !bling%p_di14c(i,j,k,tau) = bling%p_di14c(i,j,k,tau) +               &
+       !  (bling%jdi14c(i,j,k) - bling%j14c_decay_dic(i,j,k)) * dt          &
+       !  * grid_tmask(i,j,k)
 
-       bling%jdo14c(i,j,k) = bling%jdo14c(i,j,k) + bling%phi_dop *         &
-         bling%j14c_reminp(i,j,k) - bling%gamma_dop * bling%f_do14c(i,j,k)
+       bling%p_di14c(i,j,k,tau) = bling%p_di14c(i,j,k,tau)            & 
+                                - bling%j14c_decay_dic(i,j,k) * dt * grid_tmask(i,j,k)
+
+       !bling%jdo14c(i,j,k) = bling%jdo14c(i,j,k) + bling%phi_dop *         &
+       !  bling%j14c_reminp(i,j,k) - bling%gamma_dop * bling%f_do14c(i,j,k)
          
-       bling%p_do14c(i,j,k,tau) = bling%p_do14c(i,j,k,tau) +               &
-         (bling%jdo14c(i,j,k) - bling%j14c_decay_doc(i,j,k)) * dt          &
-         * grid_tmask(i,j,k)
+       !bling%p_do14c(i,j,k,tau) = bling%p_do14c(i,j,k,tau) +               &
+       !  (bling%jdo14c(i,j,k) - bling%j14c_decay_doc(i,j,k)) * dt          &
+       !  * grid_tmask(i,j,k)
       endif                                                   !RADIOCARBON>>
+
+      if (do_13c) then
+
+        bling%jdi13c(i,j,k)= &
+                               (bling%jp_recycle(i,j,k)-bling%jp_uptake(i,j,k))*bling%c13_2_p(i,j,k)&
+                             + (1.-bling%phi_dop)*bling%j13c_reminp(i,j,k)                          &
+                             + bling%gamma_dop*bling%f_do13c(i,j,k)                                 &
+                             + bling%j13c_reminca(i,j,k) - bling%j13c_uptakeca(i,j,k)               
+
+        bling%p_di13c(i,j,k,tau) =  bling%p_di13c(i,j,k,tau) &
+                                  + bling%jdi13c(i,j,k) * dt * grid_tmask(i,j,k)
+
+        bling%jdo13c(i,j,k)= & 
+                               bling%j13c_org(i,j,k)                  &
+                             + bling%phi_dop*bling%j13c_reminp(i,j,k) & 
+                             - bling%gamma_dop*bling%f_do13c(i,j,k)   
+
+        bling%p_do13c(i,j,k,tau) =   bling%p_do13c(i,j,k,tau)                  &
+                                   + bling%jdo13c(i,j,k) * dt * grid_tmask(i,j,k)
+
+      endif
  
     enddo; enddo ; enddo  !} i,j,k
     endif                                                    !CARBON CYCLE>>
-       
-
+ 
     !
     ! PO4_pre
     ! Set equal to PO4 in surface layer only.
@@ -2660,13 +3148,21 @@ write (stdlogunit, generic_bling_nml)
     endif
     
     !
-    ! DIC_pre and ALK_pre
+    ! DIC_pre and ALK_pre and DI13C_pre
     ! Set equal to DIC and ALK, respectively, in surface layer.
     if (do_carbon_pre) then 
       do j = jsc, jec ; do i = isc, iec  !{
         bling%p_alk_pre(i,j,1,tau) = bling%f_alk(i,j,1) 
         bling%p_dic_pre(i,j,1,tau) = bling%f_dic(i,j,1) 
       enddo; enddo ;  !} i,j
+     
+      ! Set equal to DI13C at the surface
+      if (do_13c) then 
+        do j = jsc, jec ; do i = isc, iec  !{
+          bling%p_di13c_pre(i,j,1,tau) = bling%f_di13c(i,j,1) 
+        enddo; enddo ;  !} i,j
+      endif
+
     endif
 
     !
@@ -2679,8 +3175,11 @@ write (stdlogunit, generic_bling_nml)
     endif
     call g_tracer_set_values(tracer_list,'biomass_p', 'field',bling%f_biomass_p ,isd,jsd,ntau=1)
     call g_tracer_set_values(tracer_list,'irr_mem_b' ,  'field',bling%f_irr_mem   ,isd,jsd,ntau=1)
-    if (bury_caco3) &
+    if (bury_caco3) then
       call g_tracer_set_values(tracer_list,'cased_b',   'field',bling%f_cased     ,isd,jsd,ntau=1)
+      if (do_13c) &
+        call g_tracer_set_values(tracer_list,'ca13csed','field',bling%f_ca13csed  ,isd,jsd,ntau=1)
+    endif
 
     !-----------------------------------------------------------------------
     !       Save variables for diagnostics
@@ -2989,7 +3488,91 @@ write (stdlogunit, generic_bling_nml)
          is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
     if (bling%id_jdo14c .gt. 0)                                                  &
          used = send_data(bling%id_jdo14c,         bling%jdo14c*rho_dzt,         &
-         model_time, rmask = grid_tmask,                                         & 
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_co2_star .gt. 0)                                                &
+         used = send_data(bling%id_co2_star,       bling%co2_star,               &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_jdi13c .gt. 0)                                                  &
+         used = send_data(bling%id_jdi13c,         bling%jdi13c*rho_dzt,         &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_jdo13c .gt. 0)                                                  &
+         used = send_data(bling%id_jdo13c,         bling%jdo13c*rho_dzt,         &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_j13c_reminp .gt. 0)                                             &
+         used = send_data(bling%id_j13c_reminp,    bling%j13c_reminp*rho_dzt,    &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_fpo13c .gt. 0)                                                  &
+         used = send_data(bling%id_fpo13c,         bling%fpo13c,                 &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_j13c_reminca .gt. 0)                                            &
+         used = send_data(bling%id_j13c_reminca,   bling%j13c_reminca*rho_dzt,   &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_j13c_uptakeca .gt. 0)                                           &
+         used = send_data(bling%id_j13c_uptakeca,  bling%j13c_uptakeca*rho_dzt,  &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_fca13co3  .gt. 0)                                               &
+         used = send_data(bling%id_fca13co3,       bling%fca13co3 ,              &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_c13o2_csurf .gt. 0)&
+         used = send_data(bling%id_c13o2_csurf,   bling%c13o2_csurf, &
+         model_time, rmask = grid_tmask(:,:,1),                      &
+         is_in=isc, js_in=jsc,ie_in=iec, je_in=jec)
+    if (bling%id_c13o2_alpha .gt. 0)&
+         used = send_data(bling%id_c13o2_alpha,   bling%c13o2_alpha, &
+         model_time, rmask = grid_tmask(:,:,1),                      &
+         is_in=isc, js_in=jsc,ie_in=iec, je_in=jec)
+    if (bling%id_b_di13c .gt. 0)                                                 &
+         used = send_data(bling%id_b_di13c,        bling%b_di13c,                &
+         model_time, rmask = grid_tmask(:,:,1),& 
+         is_in=isc, js_in=jsc, ie_in=iec, je_in=jec)
+    if (bling%id_wrk1 .gt. 0)                                                    &
+         used = send_data(bling%id_wrk1,          bling%wrk1,                    &
+         model_time, rmask = grid_tmask(:,:,1),& 
+         is_in=isc, js_in=jsc, ie_in=iec, je_in=jec)
+    if (bling%id_wrk2 .gt. 0)                                                    &
+         used = send_data(bling%id_wrk2,          bling%wrk2,                    &
+         model_time, rmask = grid_tmask(:,:,1),& 
+         is_in=isc, js_in=jsc, ie_in=iec, je_in=jec)
+    if (bling%id_wrk3 .gt. 0)                                           &
+         used = send_data(bling%id_wrk3,  bling%wrk3,  &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_fca13co3_to_sed .gt. 0)                                         &
+         used = send_data(bling%id_fca13co3_to_sed, bling%fca13co3_to_sed,       &
+         model_time, rmask = grid_tmask(:,:,1),& 
+         is_in=isc, js_in=jsc, ie_in=iec, je_in=jec)
+    if (bling%id_fca13csed_burial .gt. 0)                                        &
+         used = send_data(bling%id_fca13csed_burial, bling%fca13csed_burial,     &
+         model_time, rmask = grid_tmask(:,:,1),& 
+         is_in=isc, js_in=jsc, ie_in=iec, je_in=jec)
+    if (bling%id_fca13csed_redis .gt. 0)                                         &
+         used = send_data(bling%id_fca13csed_redis, bling%fca13csed_redis,       &
+         model_time, rmask = grid_tmask(:,:,1),& 
+         is_in=isc, js_in=jsc, ie_in=iec, je_in=jec)
+    if (bling%id_alpha13c_org .gt. 0)                                            &
+         used = send_data(bling%id_alpha13c_org,   bling%alpha13c_org,           &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_alpha13_DIC_g .gt. 0)                                           &
+         used = send_data(bling%id_alpha13_DIC_g,  bling%alpha13_DIC_g,          &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_c13_2_p .gt. 0)                                                 &
+         used = send_data(bling%id_c13_2_p,        bling%c13_2_p,                &
+         model_time, rmask = grid_tmask,& 
+         is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
+    if (bling%id_j13c_org .gt. 0)                                                &
+         used = send_data(bling%id_j13c_org,       bling%j13c_org*rho_dzt,       &
+         model_time, rmask = grid_tmask,& 
          is_in=isc, js_in=jsc, ks_in=1,ie_in=iec, je_in=jec, ke_in=nk)
 
   end subroutine generic_BLING_update_from_source
@@ -3037,8 +3620,9 @@ write (stdlogunit, generic_bling_nml)
     real    :: tt,tk,ts,ts2,ts3,ts4,ts5
     real, dimension(:,:,:)  ,pointer  :: grid_tmask
     real, dimension(:,:,:,:), pointer :: o2_field
-    real, dimension(:,:), ALLOCATABLE :: co2_alpha,co2_csurf,o2_alpha,o2_csurf
+    real, dimension(:,:), ALLOCATABLE :: co2_alpha,co2_csurf,o2_alpha,o2_csurf, sc_co2_2d
     real, dimension(:,:), ALLOCATABLE :: co2_sat_alpha,co2_sat_csurf,c14o2_alpha,c14o2_csurf
+    real, dimension(:,:), ALLOCATABLE :: c13o2_csurf, c13o2_alpha
     character(len=fm_string_len), parameter :: sub_name = 'generic_BLING_set_boundary_values'
 
     !Get the necessary properties
@@ -3048,8 +3632,11 @@ write (stdlogunit, generic_bling_nml)
 
     allocate(    co2_alpha(isd:ied, jsd:jed)); co2_alpha=0.0
     allocate(    co2_csurf(isd:ied, jsd:jed)); co2_csurf=0.0
+    allocate(    sc_co2_2d(isd:ied, jsd:jed)); sc_co2_2d=0.0
     allocate(co2_sat_alpha(isd:ied, jsd:jed)); co2_sat_alpha=0.0
     allocate(co2_sat_csurf(isd:ied, jsd:jed)); co2_sat_csurf=0.0
+    allocate(  c13o2_alpha(isd:ied, jsd:jed)); c13o2_alpha=0.0
+    allocate(  c13o2_csurf(isd:ied, jsd:jed)); c13o2_csurf=0.0
     allocate(  c14o2_alpha(isd:ied, jsd:jed)); c14o2_alpha=0.0
     allocate(  c14o2_csurf(isd:ied, jsd:jed)); c14o2_csurf=0.0
     allocate(     o2_alpha(isd:ied, jsd:jed)); o2_alpha=0.0
@@ -3105,11 +3692,12 @@ write (stdlogunit, generic_bling_nml)
        !  Cycles, 12, 141-163).
        !---------------------------------------------------------------------
 
-       sc_o2  = bling%a1_o2  + ST * (bling%a2_o2  + ST * (bling%a3_o2  + ST * bling%a4_o2 )) * &
+       !sc_o2  = bling%a1_o2  + ST * (bling%a2_o2  + ST * (bling%a3_o2  + ST * bling%a4_o2 )) * &
+       sc_o2  = bling%a1_o2+ST*(bling%a2_o2+ST*(bling%a3_o2+ST*(bling%a4_o2+ST*bling%a5_o2))) * &
             grid_tmask(i,j,1)
        sc_no_term = sqrt(660.0 / (sc_o2 + epsln)) 
      
-       o2_alpha(i,j) = o2_saturation       * sc_no_term * bling%Rho_0
+       o2_alpha(i,j) = o2_saturation       * sc_no_term 
        o2_csurf(i,j) = o2_field(i,j,1,tau) * sc_no_term * bling%Rho_0 !nnz: MOM has rho(i,j,1,tau)
 
     enddo; enddo
@@ -3143,23 +3731,52 @@ write (stdlogunit, generic_bling_nml)
        !  formulation presented by Wanninkhof (1992, J. Geophys. Res., 97,
        !  7373-7382).
        !---------------------------------------------------------------------
-       sc_co2 = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 + ST * bling%a4_co2)) * &
+       !sc_co2 = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 + ST * bling%a4_co2)) * &
+       !     grid_tmask(i,j,1)
+       !sc_no_term = sqrt(660.0 / (sc_co2 + epsln)) 
+       !sc_co2_2d(i,j) = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 + ST * bling%a4_co2)) * &
+       sc_co2_2d(i,j) = bling%a1_co2+ST*(bling%a2_co2+ST*(bling%a3_co2+ST*(bling%a4_co2+ST*bling%a5_co2))) * &
             grid_tmask(i,j,1)
-       sc_no_term = sqrt(660.0 / (sc_co2 + epsln)) 
        
-       co2_alpha(i,j) = co2_alpha(i,j)* sc_no_term * bling%Rho_0 !nnz: MOM has rho(i,j,1,tau)  
-       co2_csurf(i,j) = co2_csurf(i,j)* sc_no_term * bling%Rho_0 !nnz: MOM has rho(i,j,1,tau) 
+       !co2_alpha(i,j) = co2_alpha(i,j)* sc_no_term * bling%Rho_0 !nnz: MOM has rho(i,j,1,tau)  
+       !co2_csurf(i,j) = co2_csurf(i,j)* sc_no_term * bling%Rho_0 !nnz: MOM has rho(i,j,1,tau) 
+
+       co2_alpha(i,j) = co2_alpha(i,j)*bling%Rho_0 !nnz: MOM has rho(i,j,1,tau)  
+       co2_csurf(i,j) = co2_csurf(i,j)*bling%Rho_0 !nnz: MOM has rho(i,j,1,tau) 
 
     enddo; enddo
 
     call g_tracer_set_values(tracer_list,'dic_b','alpha',co2_alpha,isd,jsd)
     call g_tracer_set_values(tracer_list,'dic_b','csurf',co2_csurf,isd,jsd)
+    call g_tracer_set_values(tracer_list,'dic_b','sc_no',sc_co2_2d,isd,jsd)
 
+    if (do_13c) then
+      
+      call g_tracer_get_values(tracer_list,'di13c','alpha', c13o2_alpha ,isd,jsd)
+      call g_tracer_get_values(tracer_list,'di13c','csurf', c13o2_csurf ,isd,jsd)
 
-      if (do_carbon_pre) then
+      do j = jsc, jec  ; do i = isc, iec
+
+        sal = SSS(i,j) ; ST = SST(i,j)
+        !sc_co2 = bling%a1_co2 + ST*(bling%a2_co2+ST*(bling%a3_co2+ST*bling%a4_co2))*grid_tmask(i,j,1)
+        sc_co2 = bling%a1_co2+ST*(bling%a2_co2+ST*(bling%a3_co2+ST*(bling%a4_co2+ST*bling%a5_co2))) &
+                *grid_tmask(i,j,1)
+        sc_no_term = sqrt(660.0 / (sc_co2 + epsln)) 
+
+        c13o2_alpha(i,j) = c13o2_alpha(i,j) * sc_no_term * bling%Rho_0
+        c13o2_csurf(i,j) = c13o2_csurf(i,j) * sc_no_term * bling%Rho_0
+
+      enddo ; enddo  !} i,j
+
+      call g_tracer_set_values(tracer_list,'di13c','alpha',c13o2_alpha,isd,jsd)
+      call g_tracer_set_values(tracer_list,'di13c','csurf',c13o2_csurf,isd,jsd)
+
+    endif
+
+    if (do_carbon_sat) then
  
-        call g_tracer_get_values(tracer_list,'dic_sat','alpha', co2_sat_alpha ,isd,jsd)
-        call g_tracer_get_values(tracer_list,'dic_sat','csurf', co2_sat_csurf ,isd,jsd)
+      call g_tracer_get_values(tracer_list,'dic_sat','alpha', co2_sat_alpha ,isd,jsd)
+      call g_tracer_get_values(tracer_list,'dic_sat','csurf', co2_sat_csurf ,isd,jsd)
 
         do j=jsc,jec ; do i=isc,iec
          !---------------------------------------------------------------------
@@ -3170,8 +3787,9 @@ write (stdlogunit, generic_bling_nml)
          !---------------------------------------------------------------------
 
          sal = SSS(i,j) ; ST = SST(i,j)
-         sc_co2 = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 +  &
-           ST * bling%a4_co2)) * grid_tmask(i,j,1)
+         !sc_co2 = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 + ST * bling%a4_co2)) &
+         sc_co2 = bling%a1_co2+ST*(bling%a2_co2+ST*(bling%a3_co2+ST*(bling%a4_co2+ST*bling%a5_co2))) &
+           * grid_tmask(i,j,1)
          sc_no_term = sqrt(660.0 / (sc_co2 + epsln)) 
        
          co2_sat_alpha(i,j) = co2_sat_alpha(i,j) * sc_no_term * bling%fast_gasex * &
@@ -3199,8 +3817,10 @@ write (stdlogunit, generic_bling_nml)
          !---------------------------------------------------------------------
 
          sal = SSS(i,j) ; ST = SST(i,j)
-         sc_co2 = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 +  &
-           ST * bling%a4_co2)) * grid_tmask(i,j,1)
+         !sc_co2 = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 +  &
+         !  ST * bling%a4_co2)) * grid_tmask(i,j,1)
+         sc_co2 = bling%a1_co2+ST*(bling%a2_co2+ST*(bling%a3_co2+ST*(bling%a4_co2+ST*bling%a5_co2))) &
+           * grid_tmask(i,j,1)
          sc_no_term = sqrt(660.0 / (sc_co2 + epsln)) 
        
          c14o2_alpha(i,j) = c14o2_alpha(i,j) * 1. * sc_no_term * bling%Rho_0 
@@ -3216,10 +3836,11 @@ write (stdlogunit, generic_bling_nml)
     endif                                                    !CARBON CYCLE>>
 
 
-    deallocate(                    &
-      co2_alpha,co2_csurf,         &
-      co2_sat_alpha,co2_sat_csurf, &
-      c14o2_alpha,c14o2_csurf,     &
+    deallocate(                     &
+      co2_alpha,co2_csurf,sc_co2_2d,&
+      co2_sat_alpha,co2_sat_csurf,  &
+      c13o2_alpha,c13o2_csurf,      &
+      c14o2_alpha,c14o2_csurf,      &
       o2_alpha,o2_csurf)
 
   end subroutine generic_BLING_set_boundary_values
@@ -3333,7 +3954,7 @@ write (stdlogunit, generic_bling_nml)
     allocate(bling%fcased_burial(isd:ied, jsd:jed));        bling%fcased_burial=0.0
     allocate(bling%fcased_redis (isd:ied, jsd:jed));        bling%fcased_redis=0.0
       endif                                                    !BURY CACO3>>
-      if (do_carbon_pre) then                                     !<<DIC_PRE  
+      if (do_carbon_sat) then                                     !<<DIC_SAT  
     allocate(bling%htotal_satlo(isd:ied, jsd:jed))
     allocate(bling%htotal_sathi(isd:ied, jsd:jed))
     allocate(bling%f_alk_pre(isd:ied, jsd:jed, 1:nk));      bling%f_alk_pre=0.0
@@ -3342,21 +3963,49 @@ write (stdlogunit, generic_bling_nml)
     allocate(bling%f_htotal_sat(isd:ied, jsd:jed, 1:nk));   bling%f_htotal_sat=0.0
     allocate(bling%co2_sat_csurf(isd:ied, jsd:jed));        bling%co2_sat_csurf=0.0
     allocate(bling%pco2_sat_surf(isd:ied, jsd:jed));        bling%pco2_sat_surf=0.0
-      endif                                                       !DIC_PRE>>
+      endif                                                       !DIC_SAT>>
       if (do_14c) then                                        !<<RADIOCARBON
-    allocate(bling%c14_2_p(isd:ied, jsd:jed, 1:nk));        bling%c14_2_p=0.0
+    !allocate(bling%c14_2_p(isd:ied, jsd:jed, 1:nk));        bling%c14_2_p=0.0
+    !allocate(bling%f_do14c(isd:ied, jsd:jed, 1:nk));        bling%f_do14c=0.0
+    !allocate(bling%fpo14c(isd:ied, jsd:jed, 1:nk));         bling%fpo14c=0.0
+    !allocate(bling%j14c_decay_doc(isd:ied, jsd:jed, 1:nk)); bling%j14c_decay_doc=0.0
+    !allocate(bling%j14c_reminp(isd:ied, jsd:jed, 1:nk));    bling%j14c_reminp=0.0
+    !allocate(bling%jdi14c(isd:ied, jsd:jed, 1:nk));         bling%jdi14c=0.0
+    !allocate(bling%jdo14c(isd:ied, jsd:jed, 1:nk));         bling%jdo14c=0.0
+    !allocate(bling%b_di14c      (isd:ied, jsd:jed));        bling%b_di14c=0.0
     allocate(bling%f_di14c(isd:ied, jsd:jed, 1:nk));        bling%f_di14c=0.0
-    allocate(bling%f_do14c(isd:ied, jsd:jed, 1:nk));        bling%f_do14c=0.0
-    allocate(bling%fpo14c(isd:ied, jsd:jed, 1:nk));         bling%fpo14c=0.0
     allocate(bling%j14c_decay_dic(isd:ied, jsd:jed, 1:nk)); bling%j14c_decay_dic=0.0
-    allocate(bling%j14c_decay_doc(isd:ied, jsd:jed, 1:nk)); bling%j14c_decay_doc=0.0
-    allocate(bling%j14c_reminp(isd:ied, jsd:jed, 1:nk));    bling%j14c_reminp=0.0
-    allocate(bling%jdi14c(isd:ied, jsd:jed, 1:nk));         bling%jdi14c=0.0
-    allocate(bling%jdo14c(isd:ied, jsd:jed, 1:nk));         bling%jdo14c=0.0
     allocate(bling%c14o2_csurf  (isd:ied, jsd:jed));        bling%c14o2_csurf=0.0
     allocate(bling%c14o2_alpha  (isd:ied, jsd:jed));        bling%c14o2_alpha=0.0
-    allocate(bling%b_di14c      (isd:ied, jsd:jed));        bling%b_di14c=0.0
       endif                                                   !RADIOCARBON>>
+      if (do_13c) then                                          !<<CARBON-13
+    allocate(bling%f_di13c         (isd:ied, jsd:jed, 1:nk));    bling%f_di13c=0.0
+    allocate(bling%f_do13c         (isd:ied, jsd:jed, 1:nk));    bling%f_do13c=0.0
+    allocate(bling%jdi13c          (isd:ied, jsd:jed, 1:nk));    bling%jdi13c=0.0
+    allocate(bling%jdo13c          (isd:ied, jsd:jed, 1:nk));    bling%jdo13c=0.0
+    allocate(bling%j13c_reminp     (isd:ied, jsd:jed, 1:nk));    bling%j13c_reminp=0.0
+    allocate(bling%fpo13c          (isd:ied, jsd:jed, 1:nk));    bling%fpo13c=0.0
+    allocate(bling%j13c_reminca    (isd:ied, jsd:jed, 1:nk));    bling%j13c_reminca=0.0
+    allocate(bling%j13c_uptakeca   (isd:ied, jsd:jed, 1:nk));    bling%j13c_uptakeca=0.0
+    allocate(bling%fca13co3        (isd:ied, jsd:jed, 1:nk));    bling%fca13co3=0.0
+    allocate(bling%alpha13c_org    (isd:ied, jsd:jed, 1:nk));    bling%alpha13c_org=0.0
+    allocate(bling%alpha13_DIC_g   (isd:ied, jsd:jed, 1:nk));    bling%alpha13_DIC_g=0.0
+    allocate(bling%c13_2_p         (isd:ied, jsd:jed, 1:nk));    bling%c13_2_p=0.0
+    allocate(bling%j13c_org        (isd:ied, jsd:jed, 1:nk));    bling%j13c_org=0.0
+    allocate(bling%b_di13c         (isd:ied, jsd:jed));          bling%b_di13c=0.0
+    allocate(bling%wrk1            (isd:ied, jsd:jed));          bling%wrk1=0.0
+    allocate(bling%wrk2            (isd:ied, jsd:jed));          bling%wrk2=0.0
+    allocate(bling%wrk3            (isd:ied, jsd:jed, 1:nk));    bling%wrk3=0.0
+    allocate(bling%fca13co3_to_sed (isd:ied, jsd:jed));          bling%fca13co3_to_sed=0.0
+    allocate(bling%c13o2_csurf     (isd:ied, jsd:jed));          bling%c13o2_csurf=0.0
+    allocate(bling%c13o2_alpha     (isd:ied, jsd:jed));          bling%c13o2_alpha=0.0
+      if (bury_caco3) then
+    allocate(bling%f_ca13csed      (isd:ied, jsd:jed, 1:nk));    bling%f_ca13csed=0.0
+    allocate(bling%fca13csed_burial(isd:ied, jsd:jed));          bling%fca13csed_burial=0.0
+    allocate(bling%fca13csed_redis (isd:ied, jsd:jed));          bling%fca13csed_redis=0.0
+      endif                                                     !CARBON-13>>
+      endif                                                     !CARBON-13>>
+    allocate(bling%co2_star     (isd:ied, jsd:jed, 1:nk));     bling%co2_star=0.0  ! needed for 13c but computed within do_carbon
     endif                                                    !CARBON CYCLE>>
 
   end subroutine user_allocate_arrays
@@ -3447,7 +4096,7 @@ write (stdlogunit, generic_bling_nml)
            bling%fcased_burial,&
            bling%fcased_redis )
       endif                                                    !BURY CACO3>>
-      if (do_carbon_pre) then                                     !<<DIC_PRE  
+      if (do_carbon_sat) then                                     !<<DIC_SAT
       deallocate(&
            bling%f_alk_pre,&
            bling%f_dic_pre,&
@@ -3457,22 +4106,49 @@ write (stdlogunit, generic_bling_nml)
            bling%pco2_sat_surf,&
            bling%htotal_satlo,&
            bling%htotal_sathi )
-      endif                                                       !DIC_PRE>>
+      endif                                                       !DIC_SAT>>
       if (do_14c) then                                        !<<RADIOCARBON
       deallocate(&
-           bling%c14_2_p,&
+           !bling%c14_2_p,&
            bling%f_di14c,&
-           bling%f_do14c,&
-           bling%fpo14c,&
+           !bling%f_do14c,&
+           !bling%fpo14c,&
            bling%j14c_decay_dic,&
-           bling%j14c_decay_doc,&
-           bling%j14c_reminp,&
-           bling%jdi14c,&
-           bling%jdo14c,&
+           !bling%j14c_decay_doc,&
+           !bling%j14c_reminp,&
+           !bling%jdi14c,&
+           !bling%jdo14c,&
            bling%c14o2_alpha,&
-           bling%c14o2_csurf,&
-           bling%b_di14c )
+           !bling%b_di14c,& 
+           bling%c14o2_csurf )
       endif                                                   !RADIOCARBON>>
+      if (do_13c) then                                          !<<CARBON-13
+      deallocate(&
+           bling%f_di13c,        &
+           bling%f_do13c,        &
+           bling%jdi13c,         &
+           bling%jdo13c,         &
+           bling%j13c_reminp,    &
+           bling%fpo13c,         &
+           bling%j13c_reminca,   &
+           bling%j13c_uptakeca,  &
+           bling%fca13co3,       &
+           bling%alpha13_DIC_g,  &
+           bling%alpha13c_org,   &
+           bling%c13_2_p,        &
+           bling%j13c_org,       &
+           bling%b_di13c,        &
+           bling%wrk1,           &
+           bling%wrk2,           &
+           bling%wrk3,           &
+           bling%fca13co3_to_sed,&
+           bling%c13o2_csurf,    &
+           bling%c13o2_alpha     &
+           !bling% &
+                )
+           if (bury_caco3) deallocate(bling%fca13csed_burial,bling%fca13csed_redis)
+      endif                                                     !CARBON-13>>
+      deallocate(bling%co2_star)
     endif                                                    !CARBON CYCLE>>
 
   end subroutine user_deallocate_arrays
