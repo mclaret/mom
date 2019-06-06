@@ -1142,6 +1142,7 @@ write (stdlogunit, generic_bling_nml)
     !-----------------------------------------------------------------------
     !       coefficients for O2 saturation
     !-----------------------------------------------------------------------
+    ! Wanninkhof (1992)
     call g_tracer_add_param('a_0', bling%a_0, 2.00907)
     call g_tracer_add_param('a_1', bling%a_1, 3.22014)
     call g_tracer_add_param('a_2', bling%a_2, 4.05010)
@@ -1161,32 +1162,32 @@ write (stdlogunit, generic_bling_nml)
     !  7373-7382).
     !-----------------------------------------------------------------------
     !New Wanninkhof numbers (this is a personnal comm Wanninkhof to Dunne, see Dunne et al. 2012 supp)
-    !call g_tracer_add_param('a1_co2', bling%a1_co2,  2068.9)
-    !call g_tracer_add_param('a2_co2', bling%a2_co2, -118.63)
-    !call g_tracer_add_param('a3_co2', bling%a3_co2,  2.9311)
-    !call g_tracer_add_param('a4_co2', bling%a4_co2, -0.027)
+    call g_tracer_add_param('a1_co2', bling%a1_co2,  2068.9)
+    call g_tracer_add_param('a2_co2', bling%a2_co2, -118.63)
+    call g_tracer_add_param('a3_co2', bling%a3_co2,  2.9311)
+    call g_tracer_add_param('a4_co2', bling%a4_co2, -0.027)
     ! Wanninkhof 2014
-    call g_tracer_add_param('a1_co2', bling%a1_co2,    2116.8)
-    call g_tracer_add_param('a2_co2', bling%a2_co2,   -136.25)
-    call g_tracer_add_param('a3_co2', bling%a3_co2,    4.7353)
-    call g_tracer_add_param('a4_co2', bling%a4_co2, -0.092307)
-    call g_tracer_add_param('a5_co2', bling%a5_co2, 0.0007555)
+    !call g_tracer_add_param('a1_co2', bling%a1_co2,    2116.8)
+    !call g_tracer_add_param('a2_co2', bling%a2_co2,   -136.25)
+    !call g_tracer_add_param('a3_co2', bling%a3_co2,    4.7353)
+    !call g_tracer_add_param('a4_co2', bling%a4_co2, -0.092307)
+    !call g_tracer_add_param('a5_co2', bling%a5_co2, 0.0007555)
     !---------------------------------------------------------------------
     !  Compute the Schmidt number of O2 in seawater using the 
     !  formulation proposed by Keeling et al. (1998, Global Biogeochem.
     !  Cycles, 12, 141-163).
     !---------------------------------------------------------------------
     !New Wanninkhof numbers (this is a personnal comm Wanninkhof to Dunne, see Dunne et al. 2012 supp)
-    !call g_tracer_add_param('a1_o2', bling%a1_o2, 1929.7)
-    !call g_tracer_add_param('a2_o2', bling%a2_o2, -117.46)
-    !call g_tracer_add_param('a3_o2', bling%a3_o2, 3.116)
-    !call g_tracer_add_param('a4_o2', bling%a4_o2, -0.0306)
+    call g_tracer_add_param('a1_o2', bling%a1_o2, 1929.7)
+    call g_tracer_add_param('a2_o2', bling%a2_o2, -117.46)
+    call g_tracer_add_param('a3_o2', bling%a3_o2, 3.116)
+    call g_tracer_add_param('a4_o2', bling%a4_o2, -0.0306)
     ! Wanninkhof 2014
-    call g_tracer_add_param('a1_o2', bling%a1_o2, 1920.4)
-    call g_tracer_add_param('a2_o2', bling%a2_o2, -135.6)
-    call g_tracer_add_param('a3_o2', bling%a3_o2, 5.2122)
-    call g_tracer_add_param('a4_o2', bling%a4_o2, -0.10939)
-    call g_tracer_add_param('a5_o2', bling%a5_o2, 0.00093777)
+    !call g_tracer_add_param('a1_o2', bling%a1_o2, 1920.4)
+    !call g_tracer_add_param('a2_o2', bling%a2_o2, -135.6)
+    !call g_tracer_add_param('a3_o2', bling%a3_o2, 5.2122)
+    !call g_tracer_add_param('a4_o2', bling%a4_o2, -0.10939)
+    !call g_tracer_add_param('a5_o2', bling%a5_o2, 0.00093777)
 
     call g_tracer_add_param('htotal_scale_lo', bling%htotal_scale_lo, 0.01)
     call g_tracer_add_param('htotal_scale_hi', bling%htotal_scale_hi, 100.0)
@@ -1534,7 +1535,7 @@ write (stdlogunit, generic_bling_nml)
          flux_gas_name  = 'o2_b_flux',                              &
          flux_gas_type  = 'air_sea_gas_flux',                       &
          flux_gas_molwt = WTMO2,                                    &
-         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
+         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),               &
          flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc' )
 
     !
@@ -1647,7 +1648,7 @@ write (stdlogunit, generic_bling_nml)
          !flux_gas_type  = 'air_sea_gas_flux',        &
          flux_gas_type  = 'air_sea_gas_flux_generic',&
          flux_gas_molwt = WTMCO2,                    &
-         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
+         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),&
          flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',  &
          !flux_runoff    = .false.,                   &
          flux_runoff    = .true.,                    &
@@ -1716,7 +1717,7 @@ write (stdlogunit, generic_bling_nml)
            flux_gas_name  = 'co2_sat_flux',            &
            flux_gas_type  = 'air_sea_gas_flux',        &
            flux_gas_molwt = WTMCO2,                    &
-           flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
+           flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),&
            flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',  &
            flux_param     = (/12.011e-03  /),          &
            init_value     = 0.001)
@@ -1745,7 +1746,7 @@ write (stdlogunit, generic_bling_nml)
          flux_gas_name  = 'c14o2_flux',                 &
          flux_gas_type  = 'air_sea_gas_flux',           &
          flux_gas_molwt = 45.00995,                     &
-         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
+         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),   &
          flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',  &
          flux_param     = (/14.e-03  /),                &
          !flux_bottom    = .true.,                       &
@@ -1773,7 +1774,7 @@ write (stdlogunit, generic_bling_nml)
              flux_gas_type  = 'air_sea_gas_flux',                      &
              flux_gas_name  = 'c13o2_flux',                            &
              flux_gas_molwt = 45.00995,                                &
-             flux_gas_param = (/ 6.972e-07, 9.7561e-06 /),&  ! Wanninkhof 2014: 0.251 cm/h
+             flux_gas_param = (/ 9.36e-07, 9.7561e-06 /),              &
              flux_gas_restart_file  = 'ocean_bling_airsea_flux.res.nc',&
              flux_param     = (/ 13.e-03 /),                           &
              flux_runoff    = .true.,                                  &
@@ -3692,8 +3693,8 @@ enddo; enddo
        !  Cycles, 12, 141-163).
        !---------------------------------------------------------------------
 
-       !sc_o2  = bling%a1_o2  + ST * (bling%a2_o2  + ST * (bling%a3_o2  + ST * bling%a4_o2 )) * &
-       sc_o2  = bling%a1_o2+ST*(bling%a2_o2+ST*(bling%a3_o2+ST*(bling%a4_o2+ST*bling%a5_o2))) * &
+       sc_o2  = bling%a1_o2  + ST * (bling%a2_o2  + ST * (bling%a3_o2  + ST * bling%a4_o2 )) * &
+       !sc_o2  = bling%a1_o2+ST*(bling%a2_o2+ST*(bling%a3_o2+ST*(bling%a4_o2+ST*bling%a5_o2))) * &
             grid_tmask(i,j,1)
        sc_no_term = sqrt(660.0 / (sc_o2 + epsln)) 
      
@@ -3734,8 +3735,8 @@ enddo; enddo
        !sc_co2 = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 + ST * bling%a4_co2)) * &
        !     grid_tmask(i,j,1)
        !sc_no_term = sqrt(660.0 / (sc_co2 + epsln)) 
-       !sc_co2_2d(i,j) = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 + ST * bling%a4_co2)) * &
-       sc_co2_2d(i,j) = bling%a1_co2+ST*(bling%a2_co2+ST*(bling%a3_co2+ST*(bling%a4_co2+ST*bling%a5_co2))) * &
+       sc_co2_2d(i,j) = bling%a1_co2 + ST * (bling%a2_co2 + ST * (bling%a3_co2 + ST * bling%a4_co2)) * &
+       !sc_co2_2d(i,j) = bling%a1_co2+ST*(bling%a2_co2+ST*(bling%a3_co2+ST*(bling%a4_co2+ST*bling%a5_co2))) * &
             grid_tmask(i,j,1)
        
        !co2_alpha(i,j) = co2_alpha(i,j)* sc_no_term * bling%Rho_0 !nnz: MOM has rho(i,j,1,tau)  

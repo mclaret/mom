@@ -206,60 +206,51 @@ contains
     call g_tracer_add_param('a5_sf6', param%a5_sf6,0.0010877)
     !-----------------------------------------------------------------------
     !     Solubility coefficients for alpha in mol/l/atm (volumetric form)
-    !      (1) for CFC11, (2) for CFC12, (3) for SF6
+    !      (1) for CFC11, (2) for CFC12
     !     after Warner and Weiss (1985) DSR, vol 32 for CFC11 and CFC12 Table 5
-    !     SF6 after Bullister et al 2002 DSR Table 3
     !-----------------------------------------------------------------------
-    call g_tracer_add_param('d1_11', param%d1_11, -229.9261)
-    call g_tracer_add_param('d2_11', param%d2_11,  319.6552)
-    call g_tracer_add_param('d3_11', param%d3_11,  119.4471)
-    call g_tracer_add_param('d4_11', param%d4_11, -1.39165)
-    call g_tracer_add_param('e1_11', param%e1_11, -0.142382)
-    call g_tracer_add_param('e2_11', param%e2_11,  0.091459)
-    call g_tracer_add_param('e3_11', param%e3_11, -0.0157274)
+    !call g_tracer_add_param('d1_11', param%d1_11, -229.9261)
+    !call g_tracer_add_param('d2_11', param%d2_11,  319.6552)
+    !call g_tracer_add_param('d3_11', param%d3_11,  119.4471)
+    !call g_tracer_add_param('d4_11', param%d4_11, -1.39165)
+    !call g_tracer_add_param('e1_11', param%e1_11, -0.142382)
+    !call g_tracer_add_param('e2_11', param%e2_11,  0.091459)
+    !call g_tracer_add_param('e3_11', param%e3_11, -0.0157274)
 !
-    call g_tracer_add_param('d1_12', param%d1_12, -218.0971)
-    call g_tracer_add_param('d2_12', param%d2_12,  298.9702)
-    call g_tracer_add_param('d3_12', param%d3_12,  113.8049)
-    call g_tracer_add_param('d4_12', param%d4_12, -1.39165)
-    call g_tracer_add_param('e1_12', param%e1_12, -0.143566)
-    call g_tracer_add_param('e2_12', param%e2_12,  0.091015)
-    call g_tracer_add_param('e3_12', param%e3_12, -0.0153924)
-
-    call g_tracer_add_param('d1_sf6', param%d1_sf6,  -80.0343)
-    call g_tracer_add_param('d2_sf6', param%d2_sf6,   117.232)
-    call g_tracer_add_param('d3_sf6', param%d3_sf6,   29.5817)
-    call g_tracer_add_param('e1_sf6', param%e1_sf6, 0.0335183)
-    call g_tracer_add_param('e2_sf6', param%e2_sf6,-0.0373942)
-    call g_tracer_add_param('e3_sf6', param%e3_sf6,0.00774862)
-
+    !call g_tracer_add_param('d1_12', param%d1_12, -218.0971)
+    !call g_tracer_add_param('d2_12', param%d2_12,  298.9702)
+    !call g_tracer_add_param('d3_12', param%d3_12,  113.8049)
+    !call g_tracer_add_param('d4_12', param%d4_12, -1.39165)
+    !call g_tracer_add_param('e1_12', param%e1_12, -0.143566)
+    !call g_tracer_add_param('e2_12', param%e2_12,  0.091015)
+    !call g_tracer_add_param('e3_12', param%e3_12, -0.0153924)
     !-----------------------------------------------------------------------
     !     Solubility coefficients for alpha in mol/kg/atm (gravimetric form)
     !      (1) for CFC11, (2) for CFC12, (3) for SF6
     !     SF6 after Bullister et al 2002 DSR Table 3
     !-----------------------------------------------------------------------
-    !call g_tracer_add_param('d1_11', param%d1_11, -232.0411)
-    !call g_tracer_add_param('d2_11', param%d2_11,  322.5546)
-    !call g_tracer_add_param('d3_11', param%d3_11,  120.4956)
-    !call g_tracer_add_param('d4_11', param%d4_11,  -1.39165)
-    !call g_tracer_add_param('e1_11', param%e1_11, -0.146531)
-    !call g_tracer_add_param('e2_11', param%e2_11,  0.093621)
-    !call g_tracer_add_param('e3_11', param%e3_11,-0.0160693)
+    call g_tracer_add_param('d1_11', param%d1_11, -232.0411)
+    call g_tracer_add_param('d2_11', param%d2_11,  322.5546)
+    call g_tracer_add_param('d3_11', param%d3_11,  120.4956)
+    call g_tracer_add_param('d4_11', param%d4_11,  -1.39165)
+    call g_tracer_add_param('e1_11', param%e1_11, -0.146531)
+    call g_tracer_add_param('e2_11', param%e2_11,  0.093621)
+    call g_tracer_add_param('e3_11', param%e3_11,-0.0160693)
 
-    !call g_tracer_add_param('d1_12', param%d1_12, -220.2120)
-    !call g_tracer_add_param('d2_12', param%d2_12,  301.8695)
-    !call g_tracer_add_param('d3_12', param%d3_12,  114.8533)
-    !call g_tracer_add_param('d4_12', param%d4_12,  -1.39165)
-    !call g_tracer_add_param('e1_12', param%e1_12, -0.147718)
-    !call g_tracer_add_param('e2_12', param%e2_12,  0.093175)
-    !call g_tracer_add_param('e3_12', param%e3_12,-0.0157340)
+    call g_tracer_add_param('d1_12', param%d1_12, -220.2120)
+    call g_tracer_add_param('d2_12', param%d2_12,  301.8695)
+    call g_tracer_add_param('d3_12', param%d3_12,  114.8533)
+    call g_tracer_add_param('d4_12', param%d4_12,  -1.39165)
+    call g_tracer_add_param('e1_12', param%e1_12, -0.147718)
+    call g_tracer_add_param('e2_12', param%e2_12,  0.093175)
+    call g_tracer_add_param('e3_12', param%e3_12,-0.0157340)
 
-    !call g_tracer_add_param('d1_sf6', param%d1_sf6,  -82.1639)
-    !call g_tracer_add_param('d2_sf6', param%d2_sf6,   120.152)
-    !call g_tracer_add_param('d3_sf6', param%d3_sf6,   30.6372)
-    !call g_tracer_add_param('e1_sf6', param%e1_sf6, 0.0293201)
-    !call g_tracer_add_param('e2_sf6', param%e2_sf6,-0.0351974)
-    !call g_tracer_add_param('e3_sf6', param%e3_sf6,0.00740056)
+    call g_tracer_add_param('d1_sf6', param%d1_sf6,  -82.1639)
+    call g_tracer_add_param('d2_sf6', param%d2_sf6,   120.152)
+    call g_tracer_add_param('d3_sf6', param%d3_sf6,   30.6372)
+    call g_tracer_add_param('e1_sf6', param%e1_sf6, 0.0293201)
+    call g_tracer_add_param('e2_sf6', param%e2_sf6,-0.0351974)
+    call g_tracer_add_param('e3_sf6', param%e3_sf6,0.00740056)
 
     !  Rho_0 is used in the Boussinesq
     !  approximation to calculations of pressure and
@@ -315,7 +306,7 @@ contains
          prog       = .true.,              &
          flux_gas       = .true.,                      &
          flux_gas_type  = 'air_sea_gas_flux_generic',                  &
-         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /), & ! Wanninkhof 2014: 0.251 cm/h
+         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /), &
          flux_gas_restart_file  = 'ocmip2_cfc_airsea_flux.res.nc' )
 
     !g_cfc_11
@@ -326,7 +317,7 @@ contains
          prog       = .true.,              &
          flux_gas       = .true.,                      &
          flux_gas_type  = 'air_sea_gas_flux_generic',                  &
-         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /), & ! Wanninkhof 2014: 0.251 cm/h
+         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /), &
          flux_gas_restart_file  = 'ocmip2_cfc_airsea_flux.res.nc' )
 
     !sf6
@@ -337,7 +328,7 @@ contains
          prog           = .true.,              &
          flux_gas       = .true.,              &
          flux_gas_type  = 'air_sea_gas_flux_generic', &
-         flux_gas_param = (/ 6.972e-07, 9.7561e-06 /), & ! Wanninkhof 2014: 0.251 cm/h
+         flux_gas_param = (/ 9.36e-07, 9.7561e-06 /), &
          flux_gas_restart_file  = 'ocmip2_cfc_airsea_flux.res.nc' )
 
   end subroutine user_add_tracers
